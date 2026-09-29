@@ -13,6 +13,7 @@
  */
 
 import { LM } from "../tracker/landmarks.ts";
+import { HIP_HEIGHT_M, mirrorScalars, mpToThree } from "./coords.ts";
 import { BONE_INDEX, LANDMARK_COUNT, createAvatarPose, type HumanBoneName } from "../types.ts";
 import { PoseSolver } from "./poseSolver.ts";
 import { rotateV3, setAxisAngle, quat, v3, type Q4, type V3 } from "./math.ts";
@@ -171,7 +172,70 @@ solver.solve(rotateAll(rest, yaw, 0.95), visible, pose);
 check("yawed body: head stays local-identity", isIdentity(boneQuat(pose.rotations, "head"), 1e-3),
   JSON.stringify(boneQuat(pose.rotations, "head").map((n) => +n.toFixed(4))));
 
-// --- 5. Low visibility must release a chain to rest -------------------------
+// --- 5. Mirroring must be a rotation, not a reflection ----------------------
+//
+// Negating x alone is a reflection, which flips handedness; the solver's
+// re-orthogonalisation then produces a different rotation entirely, yawing the
+// torso and turning the head upside down even on a symmetric pose. These cover
+// the real conversion path, which is where that fix lives.
+
+/** Inverse of mpToThree, so a three.js-space pose can be fed in as MediaPipe input. */
+function toMediaPipeSpace(points: Float32Array): Float32Array {
+  const out = new Float32Array(points.length);
+  for (let i = 0; i < LANDMARK_COUNT; i++) {
+    const o = i * 3;
+    out[o] = points[o] ?? 0;
+    out[o + 1] = -((points[o + 1] ?? 0) - HIP_HEIGHT_M);
+    out[o + 2] = -(points[o + 2] ?? 0);
+  }
+  return out;
+}
+
+function solveVia(world: Float32Array, mirror: boolean): void {
+  const converted = new Float32Array(LANDMARK_COUNT * 3);
+  const vis = new Float32Array(LANDMARK_COUNT);
+  mpToThree(converted, world, { mirror });
+  mirrorScalars(vis, visible, mirror);
+  solver.solve(converted, vis, pose);
+}
+
+// A symmetric rest pose must solve to identity whether mirrored or not.
+// This is the direct regression test for the upside-down head.
+const restWorld = toMediaPipeSpace(rest);
+for (const mirror of [false, true]) {
+  solveVia(restWorld, mirror);
+  for (const bone of ["spine", "chest", "upperChest", "neck", "head"] as HumanBoneName[]) {
+    const q = boneQuat(pose.rotations, bone);
+    check(`mirror=${mirror}: symmetric rest leaves ${bone} at identity`, isIdentity(q, 1e-3),
+      JSON.stringify(q.map((n) => +n.toFixed(4))));
+  }
+  // Head up must stay up. This is what the screenshot actually showed.
+  const up = v3();
+  rotateV3(up, boneQuat(pose.rotations, "head"), [0, 1, 0]);
+  check(`mirror=${mirror}: head up vector still points up`, (up[1] ?? 0) > 0.99,
+    `up=[${up.map((n) => n.toFixed(2)).join(",")}]`);
+}
+
+// An asymmetric pose must land on the opposite side when mirrored, with the
+// same magnitude -- that is what distinguishes a real mirror from a mangled basis.
+const bentWorld = toMediaPipeSpace(bent);
+
+solveVia(bentWorld, false);
+const unmirroredLeft = angleOf(boneQuat(pose.rotations, "leftLowerArm"));
+const unmirroredRight = angleOf(boneQuat(pose.rotations, "rightLowerArm"));
+
+solveVia(bentWorld, true);
+const mirroredLeft = angleOf(boneQuat(pose.rotations, "leftLowerArm"));
+const mirroredRight = angleOf(boneQuat(pose.rotations, "rightLowerArm"));
+
+check("unmirrored: the bend is on the left", unmirroredLeft > 10 && unmirroredRight < 1,
+  `L=${unmirroredLeft.toFixed(1)} R=${unmirroredRight.toFixed(1)}`);
+check("mirrored: the bend moves to the right", mirroredRight > 10 && mirroredLeft < 1,
+  `L=${mirroredLeft.toFixed(1)} R=${mirroredRight.toFixed(1)}`);
+check("mirrored: the bend keeps its magnitude", Math.abs(mirroredRight - unmirroredLeft) < 0.5,
+  `${unmirroredLeft.toFixed(2)} vs ${mirroredRight.toFixed(2)}`);
+
+// --- 6. Low visibility must release a chain to rest -------------------------
 const partial = new Float32Array(LANDMARK_COUNT).fill(1);
 partial[LM.LEFT_ELBOW] = 0.1;
 partial[LM.LEFT_WRIST] = 0.1;

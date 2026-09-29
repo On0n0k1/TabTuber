@@ -11,7 +11,7 @@ import { DebugRig } from "./render/debugRig.ts";
 import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
-import { mpToThree } from "./solver/coords.ts";
+import { mirrorScalars, mpToThree } from "./solver/coords.ts";
 import { PoseSolver } from "./solver/poseSolver.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
 import { createAvatarPose, LANDMARK_COUNT } from "./types.ts";
@@ -50,6 +50,7 @@ function boot(): void {
   const filter = new LandmarkFilter(LANDMARK_COUNT);
   const filteredWorld = new Float32Array(LANDMARK_COUNT * 3);
   const points = new Float32Array(LANDMARK_COUNT * 3);
+  const visibility = new Float32Array(LANDMARK_COUNT);
 
   // Mirrored by default: the usual VTubing preference, and the only place
   // the choice is applied is mpToThree (SPEC.md 5.1).
@@ -87,9 +88,12 @@ function boot(): void {
     // jump and depth keeps its own parameters (SPEC.md section 6).
     filter.apply(filteredWorld, frame.world, frame.timestampMs);
     mpToThree(points, filteredWorld, { mirror: view.mirror });
-    stickFigure.update(points, frame.visibility);
+    // Visibility has to follow its landmark through the swap, or the solver
+    // gates each arm on the other arm's confidence when mirrored.
+    mirrorScalars(visibility, frame.visibility, view.mirror);
+    stickFigure.update(points, visibility);
 
-    solver.solve(points, frame.visibility, pose);
+    solver.solve(points, visibility, pose);
     pose.timestampMs = frame.timestampMs;
     interpolator.setTarget(pose);
   });

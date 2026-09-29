@@ -45,6 +45,45 @@ export const LM = {
 export type LandmarkIndex = (typeof LM)[keyof typeof LM];
 
 /**
+ * Left/right landmark pairs, used to mirror a pose.
+ *
+ * Mirroring cannot be done by negating x alone. That is a reflection, which
+ * flips handedness, and a reflection is not a rotation -- bases built from
+ * such points come out left-handed and the solver's re-orthogonalisation
+ * silently turns them into a completely different rotation. Reflecting AND
+ * swapping left/right identities composes to a proper rotation, which is
+ * what a bilaterally symmetric body actually does in a mirror.
+ */
+export const MIRROR_PAIRS: readonly (readonly [number, number])[] = [
+  [LM.LEFT_EYE_INNER, LM.RIGHT_EYE_INNER],
+  [LM.LEFT_EYE, LM.RIGHT_EYE],
+  [LM.LEFT_EYE_OUTER, LM.RIGHT_EYE_OUTER],
+  [LM.LEFT_EAR, LM.RIGHT_EAR],
+  [LM.MOUTH_LEFT, LM.MOUTH_RIGHT],
+  [LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER],
+  [LM.LEFT_ELBOW, LM.RIGHT_ELBOW],
+  [LM.LEFT_WRIST, LM.RIGHT_WRIST],
+  [LM.LEFT_PINKY, LM.RIGHT_PINKY],
+  [LM.LEFT_INDEX, LM.RIGHT_INDEX],
+  [LM.LEFT_THUMB, LM.RIGHT_THUMB],
+  [LM.LEFT_HIP, LM.RIGHT_HIP],
+  [LM.LEFT_KNEE, LM.RIGHT_KNEE],
+  [LM.LEFT_ANKLE, LM.RIGHT_ANKLE],
+  [LM.LEFT_HEEL, LM.RIGHT_HEEL],
+  [LM.LEFT_FOOT_INDEX, LM.RIGHT_FOOT_INDEX],
+];
+
+/** Destination slot for each landmark when mirroring. The nose maps to itself. */
+export const MIRROR_INDEX: readonly number[] = (() => {
+  const map = Array.from({ length: 33 }, (_, i) => i);
+  for (const [a, b] of MIRROR_PAIRS) {
+    map[a] = b;
+    map[b] = a;
+  }
+  return map;
+})();
+
+/**
  * Landmark pairs to draw as bones in the stick figure.
  *
  * Grouped so the debug view can colour by region -- an L/R swap or a mirrored

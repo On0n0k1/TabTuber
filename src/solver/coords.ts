@@ -19,8 +19,16 @@
  * side appears at larger image x, hence at +X here. With forward = +Z and
  * up = +Y, left = up x forward = +X. That agrees, and it agrees with the
  * reference rig, where the character's left is also +X (SPEC.md 7.1.1).
+ *
+ * Mirroring negates x AND swaps left/right landmark identities. Negating x
+ * alone is a reflection, which is not a rotation: bases built from reflected
+ * points are left-handed, and the solver's re-orthogonalisation turns them
+ * into a different rotation entirely -- in practice a yawed torso and an
+ * upside-down head. Reflection composed with the left/right relabel is a
+ * proper rotation, which is what a symmetric body does in a real mirror.
  */
 
+import { MIRROR_INDEX } from "../tracker/landmarks.ts";
 import { LANDMARK_COUNT } from "../types.ts";
 
 /**
@@ -34,9 +42,6 @@ export interface ConvertOptions {
   /**
    * Mirrored is the usual VTubing preference: raising your right hand moves
    * the limb on the same side of the screen your hand feels like it is on.
-   * Implemented by negating x, which mirrors the pose rather than relabelling
-   * landmarks -- the subject's left landmark then lands on the avatar's right,
-   * which is exactly what a mirror does.
    */
   readonly mirror: boolean;
   /** Lift onto the ground plane. Off when the caller wants hip-origin data. */
@@ -56,10 +61,33 @@ export function mpToThree(
   const lift = grounded ? HIP_HEIGHT_M : 0;
 
   for (let i = 0; i < LANDMARK_COUNT; i++) {
-    const o = i * 3;
-    out[o] = (world[o] ?? 0) * sx;
-    out[o + 1] = -(world[o + 1] ?? 0) + lift;
-    out[o + 2] = -(world[o + 2] ?? 0);
+    const src = i * 3;
+    // Reflected points land in their mirror partner's slot, so a slot always
+    // holds the landmark it is named for on the displayed body.
+    const dst = (mirror ? (MIRROR_INDEX[i] ?? i) : i) * 3;
+    out[dst] = (world[src] ?? 0) * sx;
+    out[dst + 1] = -(world[src + 1] ?? 0) + lift;
+    out[dst + 2] = -(world[src + 2] ?? 0);
+  }
+}
+
+/**
+ * Applies the same left/right swap to a per-landmark scalar array.
+ *
+ * Visibility must travel with its landmark. Without this, the solver would
+ * gate the left arm on the right arm's confidence whenever mirroring is on.
+ */
+export function mirrorScalars(
+  out: Float32Array,
+  values: Float32Array,
+  mirror: boolean,
+): void {
+  if (!mirror) {
+    out.set(values);
+    return;
+  }
+  for (let i = 0; i < LANDMARK_COUNT; i++) {
+    out[MIRROR_INDEX[i] ?? i] = values[i] ?? 0;
   }
 }
 

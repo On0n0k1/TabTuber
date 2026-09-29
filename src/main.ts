@@ -8,6 +8,7 @@
 import { Camera } from "./capture/camera.ts";
 import { LandmarkFilter } from "./filter/oneEuro.ts";
 import { DebugRig } from "./render/debugRig.ts";
+import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
 import { mpToThree } from "./solver/coords.ts";
@@ -38,6 +39,9 @@ function boot(): void {
 
   const solver = new PoseSolver();
   const pose = createAvatarPose();
+  // The rig is driven from the interpolator's pose, not the solver's, so it
+  // moves at render rate rather than in 30Hz steps.
+  const interpolator = new PoseInterpolator();
   const debugRig = new DebugRig();
   stage.scene.add(debugRig.object);
 
@@ -71,7 +75,7 @@ function boot(): void {
       trackerFps: trackerFps.staleAfter(1000),
       inferenceMs: tracker.inferenceMs,
       delegate: tracker.ready ? tracker.delegate : "-",
-      confidence: pose.confidence,
+      confidence: interpolator.current.confidence,
     }),
   });
 
@@ -86,7 +90,8 @@ function boot(): void {
     stickFigure.update(points, frame.visibility);
 
     solver.solve(points, frame.visibility, pose);
-    debugRig.apply(pose);
+    pose.timestampMs = frame.timestampMs;
+    interpolator.setTarget(pose);
   });
 
   panel.addViewToggle("landmarks", true, (v) => overlay.setVisible(v));
@@ -99,6 +104,7 @@ function boot(): void {
   applyCompareOffset(view.compareOffset, stickFigure, debugRig);
   wireSolverControls(panel, solver, view, stickFigure, debugRig);
   wireFilterControls(panel, filter);
+  wireMotionControls(panel, interpolator);
 
   camera.onStateChange((s) => {
     switch (s.kind) {
@@ -135,8 +141,10 @@ function boot(): void {
   // running and double the reported rate.
   countCameraFrames(camera.element, cameraFps);
 
-  stage.onFrame(() => {
+  stage.onFrame(({ dt }) => {
     renderFps.tick();
+    interpolator.step(dt);
+    debugRig.apply(interpolator.current);
     panel.update();
   });
   stage.start();
@@ -233,6 +241,12 @@ function wireFilterControls(panel: DebugPanel, filter: LandmarkFilter): void {
   folder.add(filter.xy, "beta", 0, 0.5, 0.01).name("xy: beta");
   folder.add(filter.z, "minCutoff", 0.1, 5, 0.1).name("z: minCutoff");
   folder.add(filter.z, "beta", 0, 0.5, 0.01).name("z: beta");
+}
+
+function wireMotionControls(panel: DebugPanel, interpolator: PoseInterpolator): void {
+  const folder = panel.folder("Motion");
+  folder.add(interpolator, "enabled").name("interpolate");
+  folder.add(interpolator, "tau", 0, 0.25, 0.005).name("tau (s)");
 }
 
 /** Waits a frame so the preview has been laid out before it is measured. */

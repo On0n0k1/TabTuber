@@ -128,7 +128,50 @@ check("bent elbow: left forearm rest axis maps to +Z",
 check("bent elbow: left upper arm unaffected", isIdentity(boneQuat(pose.rotations, "leftUpperArm"), 1e-3));
 check("bent elbow: right arm unaffected", isIdentity(boneQuat(pose.rotations, "rightLowerArm"), 1e-3));
 
-// --- 4. Low visibility must release a chain to rest -------------------------
+// --- 4. The head must respond to head-only motion ---------------------------
+//
+// Rest-pose identity alone does not prove the head tracks; it only proves it
+// does not drift. These rotate nose and both ears and nothing else.
+function headTurned(axis: V3, degrees: number): Float32Array {
+  const p = restPoseLandmarks();
+  const rot = quat();
+  setAxisAngle(rot, axis, (degrees * Math.PI) / 180);
+  const out = v3();
+  for (const i of [LM.NOSE, LM.LEFT_EAR, LM.RIGHT_EAR]) {
+    // Pivot at the head, not the origin, so the torso basis is untouched.
+    rotateV3(out, rot, [p[i * 3] ?? 0, (p[i * 3 + 1] ?? 0) - 1.55, p[i * 3 + 2] ?? 0]);
+    p[i * 3] = out[0];
+    p[i * 3 + 1] = out[1] + 1.55;
+    p[i * 3 + 2] = out[2];
+  }
+  return p;
+}
+
+const angleOf = (q: Readonly<Q4>): number =>
+  (2 * Math.acos(Math.min(1, Math.abs(q[3]))) * 180) / Math.PI;
+
+for (const [axisName, axis] of [["yaw", [0, 1, 0]], ["pitch", [1, 0, 0]]] as [string, V3][]) {
+  solver.solve(headTurned(axis, 30), visible, pose);
+  const neck = angleOf(boneQuat(pose.rotations, "neck"));
+  const head = angleOf(boneQuat(pose.rotations, "head"));
+
+  check(`head ${axisName}: head bone rotates`, head > 1, `${head.toFixed(2)}deg`);
+  check(`head ${axisName}: neck takes a share`, neck > 1, `${neck.toFixed(2)}deg`);
+  // The chain must account for the full input, or the head lags the subject by
+  // a fixed fraction that no amount of tuning elsewhere can recover.
+  check(`head ${axisName}: neck + head = input`, Math.abs(neck + head - 30) < 0.5,
+    `${neck.toFixed(2)} + ${head.toFixed(2)} = ${(neck + head).toFixed(2)}`);
+  // Default neckShare is 0.4, so the split should follow it.
+  check(`head ${axisName}: split follows neckShare`, Math.abs(neck / 30 - 0.4) < 0.02,
+    `neck share = ${(neck / 30).toFixed(3)}`);
+}
+
+// Torso motion must not leak into the head's local rotation.
+solver.solve(rotateAll(rest, yaw, 0.95), visible, pose);
+check("yawed body: head stays local-identity", isIdentity(boneQuat(pose.rotations, "head"), 1e-3),
+  JSON.stringify(boneQuat(pose.rotations, "head").map((n) => +n.toFixed(4))));
+
+// --- 5. Low visibility must release a chain to rest -------------------------
 const partial = new Float32Array(LANDMARK_COUNT).fill(1);
 partial[LM.LEFT_ELBOW] = 0.1;
 partial[LM.LEFT_WRIST] = 0.1;

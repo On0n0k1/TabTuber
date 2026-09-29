@@ -156,8 +156,9 @@ export class PoseTracker {
       this.image[o + 1] = p.y;
       this.image[o + 2] = p.z;
 
-      // visibility is optional on the landmark type; absent means the model
-      // gave no opinion, which should read as "trust it" rather than zero.
+      // tasks-vision declares visibility as a required number, so this is
+      // populated in practice. The fallback only guards a malformed result,
+      // and defaults to trusting the landmark rather than gating it off.
       this.visibility[i] = p.visibility ?? 1;
     }
 

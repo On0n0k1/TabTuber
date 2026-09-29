@@ -42,3 +42,59 @@ body[data-bg="checker"] {
 body[data-bg="key"] {
   background-color: #00b140; /* broadcast chroma key green */
 }
+
+/* Blocking conditions the user must act on, not diagnostics. */
+.banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.banner[data-kind="error"] {
+  background: #7a1f2b;
+  color: #ffe8ea;
+}
+
+.banner[data-kind="info"],
+.banner[data-kind="busy"] {
+  background: #1f4a7a;
+  color: #e6f0ff;
+}
+
+.banner button {
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.banner button:hover {
+  background: rgb(255 255 255 / 0.15);
+}
+
+/*
+ * Camera preview. Mirrored for display only -- the pixels handed to the
+ * tracker are never flipped (see src/capture/camera.ts).
+ */
+#ui video {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  width: 240px;
+  border-radius: 4px;
+  border: 1px solid #3a3a44;
+  transform: scaleX(-1);
+  z-index: 5;
+}

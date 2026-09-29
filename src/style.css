@@ -1,0 +1,44 @@
+/*
+ * The canvas is transparent so OBS can composite the avatar over game
+ * footage. Nothing here may introduce an opaque background; the
+ * checkerboard is a dev-only affordance toggled by [data-bg].
+ */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+  color: #e8e8e8;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Dev affordance: makes the transparent canvas visible during development. */
+body[data-bg="checker"] {
+  --c: #2a2a32;
+  background-color: #1e1e24;
+  background-image: linear-gradient(45deg, var(--c) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--c) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--c) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--c) 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+
+body[data-bg="key"] {
+  background-color: #00b140; /* broadcast chroma key green */
+}

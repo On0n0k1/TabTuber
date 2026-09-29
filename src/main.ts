@@ -6,6 +6,7 @@
  */
 
 import { Camera } from "./capture/camera.ts";
+import { LandmarkFilter } from "./filter/oneEuro.ts";
 import { DebugRig } from "./render/debugRig.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
@@ -40,7 +41,10 @@ function boot(): void {
   const debugRig = new DebugRig();
   stage.scene.add(debugRig.object);
 
-  // Converted landmarks, allocated once and overwritten each frame.
+  // Smoothed raw landmarks, then the same data converted to three.js space.
+  // Both allocated once and overwritten each frame.
+  const filter = new LandmarkFilter(LANDMARK_COUNT);
+  const filteredWorld = new Float32Array(LANDMARK_COUNT * 3);
   const points = new Float32Array(LANDMARK_COUNT * 3);
 
   // Mirrored by default: the usual VTubing preference, and the only place
@@ -75,7 +79,10 @@ function boot(): void {
     trackerFps.tick();
     if (previewW > 0) overlay.draw(frame, previewW, previewH);
 
-    mpToThree(points, frame.world, { mirror: view.mirror });
+    // Filtered before conversion, so the mirror toggle cannot look like a
+    // jump and depth keeps its own parameters (SPEC.md section 6).
+    filter.apply(filteredWorld, frame.world, frame.timestampMs);
+    mpToThree(points, filteredWorld, { mirror: view.mirror });
     stickFigure.update(points, frame.visibility);
 
     solver.solve(points, frame.visibility, pose);
@@ -91,6 +98,7 @@ function boot(): void {
 
   applyCompareOffset(view.compareOffset, stickFigure, debugRig);
   wireSolverControls(panel, solver, view, stickFigure, debugRig);
+  wireFilterControls(panel, filter);
 
   camera.onStateChange((s) => {
     switch (s.kind) {
@@ -99,6 +107,9 @@ function boot(): void {
         break;
       case "ready":
         banner.hide();
+        // Stale filter state from before the gap would otherwise be blended
+        // into the first frames of the new stream.
+        filter.reset();
         ui.append(camera.element);
         camera.element.style.display = "";
         measurePreview(camera.element, (w, h) => {
@@ -208,6 +219,20 @@ function wireSolverControls(
     .add(view, "compareOffset", 0, 1.2, 0.05)
     .name("compare offset")
     .onChange((v: number) => applyCompareOffset(v, stickFigure, debugRig));
+}
+
+/**
+ * The filter can be switched off from here, which matters: the stick figure
+ * has to be judged against both the raw and smoothed signal, or the noise
+ * floor gets mistaken for a solver fault.
+ */
+function wireFilterControls(panel: DebugPanel, filter: LandmarkFilter): void {
+  const folder = panel.folder("Filter");
+  folder.add(filter, "enabled");
+  folder.add(filter.xy, "minCutoff", 0.1, 5, 0.1).name("xy: minCutoff");
+  folder.add(filter.xy, "beta", 0, 0.5, 0.01).name("xy: beta");
+  folder.add(filter.z, "minCutoff", 0.1, 5, 0.1).name("z: minCutoff");
+  folder.add(filter.z, "beta", 0, 0.5, 0.01).name("z: beta");
 }
 
 /** Waits a frame so the preview has been laid out before it is measured. */

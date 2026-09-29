@@ -14,7 +14,8 @@
     "fetch-assets": "node scripts/fetch-assets.mjs",
     "check:math": "node --experimental-strip-types src/solver/math.check.ts",
     "check:solver": "node --experimental-strip-types src/solver/poseSolver.check.ts",
-    "check": "npm run check:math && npm run check:solver"
+    "check": "npm run check:math && npm run check:solver && npm run check:filter",
+    "check:filter": "node --experimental-strip-types src/filter/oneEuro.check.ts"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",

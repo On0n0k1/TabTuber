@@ -6,8 +6,11 @@
  */
 
 import { Camera } from "./capture/camera.ts";
+import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
+import { mpToThree } from "./solver/coords.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
+import { LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
@@ -26,6 +29,16 @@ function boot(): void {
   const tracker = new PoseTracker();
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
+
+  const stickFigure = new StickFigure();
+  stage.scene.add(stickFigure.object);
+
+  // Converted landmarks, allocated once and overwritten each frame.
+  const points = new Float32Array(LANDMARK_COUNT * 3);
+
+  // Mirrored by default: the usual VTubing preference, and the only place
+  // the choice is applied is mpToThree (SPEC.md 5.1).
+  const view = { mirror: true };
 
   // Preview dimensions, measured after layout rather than read per frame --
   // a getBoundingClientRect inside the draw loop would thrash layout.
@@ -53,9 +66,16 @@ function boot(): void {
   tracker.onFrame((frame) => {
     trackerFps.tick();
     if (previewW > 0) overlay.draw(frame, previewW, previewH);
+
+    mpToThree(points, frame.world, { mirror: view.mirror });
+    stickFigure.update(points, frame.visibility);
   });
 
   panel.addViewToggle("landmarks", true, (v) => overlay.setVisible(v));
+  panel.addViewToggle("stickFigure", true, (v) => stickFigure.setVisible(v));
+  panel.addViewToggle("mirror", view.mirror, (v) => {
+    view.mirror = v;
+  });
 
   camera.onStateChange((s) => {
     switch (s.kind) {

@@ -11,7 +11,12 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/three": "^0.186.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
+  },
+  "dependencies": {
+    "lil-gui": "^0.21.0",
+    "three": "^0.186.1"
   }
 }

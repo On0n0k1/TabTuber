@@ -24,6 +24,7 @@ interface Readouts {
   /** Inference time alone. End-to-end latency lands with SPEC.md section 9. */
   inference: string;
   delegate: string;
+  confidence: string;
 }
 
 export interface DebugPanelOptions {
@@ -36,6 +37,7 @@ export interface DebugPanelOptions {
     trackerFps: number;
     inferenceMs: number;
     delegate: string;
+    confidence: number;
   };
 }
 
@@ -52,6 +54,7 @@ export class DebugPanel {
     trackerFps: "-",
     inference: "-",
     delegate: "-",
+    confidence: "-",
   };
 
   private readonly view = {
@@ -137,6 +140,7 @@ export class DebugPanel {
     this.readouts.trackerFps = s.trackerFps > 0 ? s.trackerFps.toFixed(0) : "-";
     this.readouts.inference = s.inferenceMs > 0 ? `${s.inferenceMs.toFixed(1)} ms` : "-";
     this.readouts.delegate = s.delegate;
+    this.readouts.confidence = s.confidence > 0 ? s.confidence.toFixed(2) : "-";
   }
 
   /** Exposed so later stages can add their own folders without owning the GUI. */

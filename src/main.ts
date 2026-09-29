@@ -6,11 +6,13 @@
  */
 
 import { Camera } from "./capture/camera.ts";
+import { DebugRig } from "./render/debugRig.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
 import { mpToThree } from "./solver/coords.ts";
+import { PoseSolver } from "./solver/poseSolver.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
-import { LANDMARK_COUNT } from "./types.ts";
+import { createAvatarPose, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
@@ -33,12 +35,17 @@ function boot(): void {
   const stickFigure = new StickFigure();
   stage.scene.add(stickFigure.object);
 
+  const solver = new PoseSolver();
+  const pose = createAvatarPose();
+  const debugRig = new DebugRig();
+  stage.scene.add(debugRig.object);
+
   // Converted landmarks, allocated once and overwritten each frame.
   const points = new Float32Array(LANDMARK_COUNT * 3);
 
   // Mirrored by default: the usual VTubing preference, and the only place
   // the choice is applied is mpToThree (SPEC.md 5.1).
-  const view = { mirror: true };
+  const view = { mirror: true, compareOffset: 0.55 };
 
   // Preview dimensions, measured after layout rather than read per frame --
   // a getBoundingClientRect inside the draw loop would thrash layout.
@@ -60,6 +67,7 @@ function boot(): void {
       trackerFps: trackerFps.staleAfter(1000),
       inferenceMs: tracker.inferenceMs,
       delegate: tracker.ready ? tracker.delegate : "-",
+      confidence: pose.confidence,
     }),
   });
 
@@ -69,13 +77,20 @@ function boot(): void {
 
     mpToThree(points, frame.world, { mirror: view.mirror });
     stickFigure.update(points, frame.visibility);
+
+    solver.solve(points, frame.visibility, pose);
+    debugRig.apply(pose);
   });
 
   panel.addViewToggle("landmarks", true, (v) => overlay.setVisible(v));
   panel.addViewToggle("stickFigure", true, (v) => stickFigure.setVisible(v));
+  panel.addViewToggle("debugRig", true, (v) => debugRig.setVisible(v));
   panel.addViewToggle("mirror", view.mirror, (v) => {
     view.mirror = v;
   });
+
+  applyCompareOffset(view.compareOffset, stickFigure, debugRig);
+  wireSolverControls(panel, solver, view, stickFigure, debugRig);
 
   camera.onStateChange((s) => {
     switch (s.kind) {
@@ -141,6 +156,58 @@ async function startPipeline(
   // the state handler could not attach yet.
   const state = camera.state;
   if (state.kind === "ready") tracker.attach(state.video);
+}
+
+/**
+ * The two 3D views sit side by side by default so divergence between them is
+ * obvious. Setting the offset to zero overlays them, which is better for
+ * judging small errors once the gross ones are gone.
+ */
+function applyCompareOffset(
+  offset: number,
+  stickFigure: StickFigure,
+  debugRig: DebugRig,
+): void {
+  stickFigure.object.position.x = -offset;
+  debugRig.setOffsetX(offset);
+}
+
+/**
+ * Exposes the provisional constants from SPEC.md 13 so they can be tuned
+ * while watching yourself move, which is the only way they get settled.
+ */
+function wireSolverControls(
+  panel: DebugPanel,
+  solver: PoseSolver,
+  view: { mirror: boolean; compareOffset: number },
+  stickFigure: StickFigure,
+  debugRig: DebugRig,
+): void {
+  const folder = panel.folder("Solver");
+
+  // Shares are renormalised on every change, so the three always sum to one
+  // and no combination can silently scale the total torso rotation.
+  const split = { spine: 0.3, chest: 0.3, upperChest: 0.4 };
+  const applySplit = (): void => {
+    const total = split.spine + split.chest + split.upperChest || 1;
+    solver.options.torsoSplit = [
+      split.spine / total,
+      split.chest / total,
+      split.upperChest / total,
+    ];
+  };
+  for (const key of ["spine", "chest", "upperChest"] as const) {
+    folder.add(split, key, 0, 1, 0.05).name(`torso: ${key}`).onChange(applySplit);
+  }
+
+  folder.add(solver.options, "neckShare", 0, 1, 0.05);
+  folder.add(solver.options, "twist");
+  folder.add(solver.options, "visibilityThreshold", 0, 1, 0.05);
+
+  folder
+    .add(view, "compareOffset", 0, 1.2, 0.05)
+    .name("compare offset")
+    .onChange((v: number) => applyCompareOffset(v, stickFigure, debugRig));
 }
 
 /** Waits a frame so the preview has been laid out before it is measured. */

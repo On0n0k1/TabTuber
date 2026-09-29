@@ -9,6 +9,7 @@ import { Camera } from "./capture/camera.ts";
 import { Stage } from "./render/stage.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
+import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
 import { StatusBanner } from "./ui/statusBanner.ts";
 
@@ -24,6 +25,12 @@ function boot(): void {
   const camera = new Camera();
   const tracker = new PoseTracker();
   const banner = new StatusBanner(ui);
+  const overlay = new Overlay2D(ui);
+
+  // Preview dimensions, measured after layout rather than read per frame --
+  // a getBoundingClientRect inside the draw loop would thrash layout.
+  let previewW = 0;
+  let previewH = 0;
 
   const renderFps = new FpsMeter();
   const cameraFps = new FpsMeter();
@@ -43,9 +50,12 @@ function boot(): void {
     }),
   });
 
-  tracker.onFrame(() => {
+  tracker.onFrame((frame) => {
     trackerFps.tick();
+    if (previewW > 0) overlay.draw(frame, previewW, previewH);
   });
+
+  panel.addViewToggle("landmarks", true, (v) => overlay.setVisible(v));
 
   camera.onStateChange((s) => {
     switch (s.kind) {
@@ -56,6 +66,11 @@ function boot(): void {
         banner.hide();
         ui.append(camera.element);
         camera.element.style.display = "";
+        measurePreview(camera.element, (w, h) => {
+          previewW = w;
+          previewH = h;
+          overlay.resize(w, h);
+        });
         if (tracker.ready) tracker.attach(s.video);
         break;
       case "error":
@@ -106,6 +121,18 @@ async function startPipeline(
   // the state handler could not attach yet.
   const state = camera.state;
   if (state.kind === "ready") tracker.attach(state.video);
+}
+
+/** Waits a frame so the preview has been laid out before it is measured. */
+function measurePreview(
+  video: HTMLVideoElement,
+  apply: (w: number, h: number) => void,
+): void {
+  requestAnimationFrame(() => {
+    const rect = video.getBoundingClientRect();
+    if (rect.width > 0) apply(rect.width, rect.height);
+    else measurePreview(video, apply);
+  });
 }
 
 /**

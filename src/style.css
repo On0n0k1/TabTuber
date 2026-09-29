@@ -98,3 +98,16 @@ body[data-bg="key"] {
   transform: scaleX(-1);
   z-index: 5;
 }
+
+/*
+ * Sits exactly over the preview and carries the same mirror, so landmarks are
+ * drawn in raw image coordinates with no flipping in the draw code.
+ */
+.overlay2d {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  transform: scaleX(-1);
+  pointer-events: none;
+  z-index: 6;
+}

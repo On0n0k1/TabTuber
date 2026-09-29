@@ -61,6 +61,7 @@ export class DebugPanel {
   };
 
   private readonly cameraFolder;
+  private readonly viewFolder: GUI;
   private deviceController: ReturnType<GUI["add"]> | null = null;
   private selectedDeviceId = "";
 
@@ -79,7 +80,8 @@ export class DebugPanel {
       .add({ restart: () => void this.camera.start(this.selectedDeviceId || undefined) }, "restart")
       .name("restart");
 
-    const view = this.gui.addFolder("View");
+    this.viewFolder = this.gui.addFolder("View");
+    const view = this.viewFolder;
     view
       .add(this.view, "background", ["checker", "key", "transparent"])
       .onChange((mode: BackgroundMode) => {
@@ -140,6 +142,16 @@ export class DebugPanel {
   /** Exposed so later stages can add their own folders without owning the GUI. */
   folder(name: string): GUI {
     return this.gui.addFolder(name);
+  }
+
+  /**
+   * Lets other modules add view toggles without the panel having to import
+   * them, which would invert the dependency and couple the UI to the pipeline.
+   */
+  addViewToggle(label: string, initial: boolean, onChange: (v: boolean) => void): void {
+    const proxy = { [label]: initial };
+    this.viewFolder.add(proxy, label).onChange(onChange);
+    onChange(initial);
   }
 
   dispose(): void {

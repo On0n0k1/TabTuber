@@ -1,0 +1,28 @@
+# Local working documents (intentionally untracked)
+CLAUDE.md
+SPEC.md
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+*.local
+
+# Rust / WASM (when introduced)
+target/
+pkg/
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*

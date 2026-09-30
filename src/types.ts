@@ -18,6 +18,23 @@ export type Vec3 = readonly [x: number, y: number, z: number];
 
 export const LANDMARK_COUNT = 33;
 
+/** MediaPipe hand topology: wrist plus four joints on each of five fingers. */
+export const HAND_LANDMARK_COUNT = 21;
+
+/**
+ * One hand, when the tracking backend provides one.
+ *
+ * Only Holistic supplies these. The pose model carries three crude knuckle
+ * estimates inside its own 33 landmarks and nothing more, which is too weak a
+ * signal for hand orientation (SPEC.md 5.6).
+ */
+export interface HandFrame {
+  /** HAND_LANDMARK_COUNT * 3, metric, origin at the hand's geometric centre. */
+  readonly world: Float32Array;
+  /** False when the backend ran but found no hand this frame. */
+  readonly present: boolean;
+}
+
 /**
  * One tracking result.
  *
@@ -35,6 +52,13 @@ export interface PoseFrame {
   readonly visibility: Float32Array;
   /** Frame timestamp, milliseconds, monotonic. */
   readonly timestampMs: number;
+  /**
+   * Null when the backend does not track hands at all, as distinct from a
+   * HandFrame with `present: false`, which means it looked and found none.
+   * The solver needs to tell those apart to choose its derivation.
+   */
+  readonly leftHand: HandFrame | null;
+  readonly rightHand: HandFrame | null;
 }
 
 /**

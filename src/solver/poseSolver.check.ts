@@ -312,6 +312,71 @@ function restHand(side: "left" | "right"): Float32Array {
     isIdentity(boneQuat(pose.rotations, "leftHand"), 1e-3));
 }
 
+// --- 5c. Posture modes (SPEC.md 5.8) ---------------------------------------
+
+/** Landmarks for a standing subject with a bent left knee. */
+function standingLandmarks(): Float32Array {
+  const p = restPoseLandmarks();
+  const set = (i: number, x: number, y: number, z: number): void => {
+    p[i * 3] = x; p[i * 3 + 1] = y; p[i * 3 + 2] = z;
+  };
+  set(LM.LEFT_KNEE, 0.09, 0.52, 0.0);
+  set(LM.RIGHT_KNEE, -0.09, 0.52, 0);
+  // Left shin swung forward, so the bend is unambiguous and one-sided.
+  set(LM.LEFT_ANKLE, 0.09, 0.2, 0.25);
+  set(LM.RIGHT_ANKLE, -0.09, 0.1, 0);
+  set(LM.LEFT_FOOT_INDEX, 0.09, 0.13, 0.39);
+  set(LM.RIGHT_FOOT_INDEX, -0.09, 0.03, 0.16);
+  set(LM.LEFT_HEEL, 0.09, 0.2, 0.25);
+  set(LM.RIGHT_HEEL, -0.09, 0.1, 0);
+  return p;
+}
+
+{
+  const standing = standingLandmarks();
+
+  // Sitting must ignore the legs entirely, however confident the landmarks.
+  const sit = new PoseSolver();
+  sit.options.posture = "sitting";
+  sit.solve(standing, visible, pose, 0);
+  for (const bone of ["leftUpperLeg", "leftLowerLeg", "leftFoot"] as HumanBoneName[]) {
+    check(`posture sitting: ${bone} stays at rest`,
+      isIdentity(boneQuat(pose.rotations, bone), 1e-3),
+      JSON.stringify(boneQuat(pose.rotations, bone).map((n) => +n.toFixed(4))));
+  }
+
+  // Standing must drive them.
+  const stand = new PoseSolver();
+  stand.options.posture = "standing";
+  stand.solve(standing, visible, pose, 0);
+  const shin = angleOf(boneQuat(pose.rotations, "leftLowerLeg"));
+  check("posture standing: a bent knee rotates the shin", shin > 10, `${shin.toFixed(1)}deg`);
+  check("posture standing: the straight leg stays at rest",
+    isIdentity(boneQuat(pose.rotations, "rightLowerLeg"), 1e-2),
+    JSON.stringify(boneQuat(pose.rotations, "rightLowerLeg").map((n) => +n.toFixed(4))));
+
+  // Posture must not leak upward: the same upper body either way.
+  sit.solve(standing, visible, pose, 33.3);
+  const sitHead = boneQuat(pose.rotations, "head");
+  const sitArm = boneQuat(pose.rotations, "leftUpperArm");
+  stand.solve(standing, visible, pose, 33.3);
+  const standHead = boneQuat(pose.rotations, "head");
+  const standArm = boneQuat(pose.rotations, "leftUpperArm");
+  const same = (a: Q4, b: Q4): boolean => a.every((v, i) => Math.abs(v - (b[i] ?? 0)) < 1e-6);
+  check("posture: upper body is identical in both modes",
+    same(sitHead, standHead) && same(sitArm, standArm));
+
+  // Legs count toward confidence only when something drives them.
+  const partial = new Float32Array(LANDMARK_COUNT).fill(1);
+  for (const i of [LM.LEFT_KNEE, LM.RIGHT_KNEE, LM.LEFT_ANKLE, LM.RIGHT_ANKLE]) partial[i] = 0;
+  sit.solve(standing, partial, pose, 66.6);
+  const sitConfidence = pose.confidence;
+  stand.solve(standing, partial, pose, 66.6);
+  check("posture: lost legs depress confidence only when standing",
+    sitConfidence === 1 && pose.confidence < 1,
+    `sitting=${sitConfidence.toFixed(2)} standing=${pose.confidence.toFixed(2)}`);
+}
+
 // --- 6. Degradation: per-bone gating, hold, then decay to relaxed ----------
 //
 // The old behaviour was a binary per-chain gate that snapped the whole arm to

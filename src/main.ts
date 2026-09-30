@@ -12,9 +12,10 @@ import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
 import { handToThree, mirrorScalars, mpToThree } from "./solver/coords.ts";
-import { PoseSolver } from "./solver/poseSolver.ts";
+import { PoseSolver, type PostureMode } from "./solver/poseSolver.ts";
 import { BONE_INDEX, type HumanBoneName } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
+import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
 import type { Tracker } from "./tracker/tracker.ts";
 import { TrackerHost } from "./tracker/trackerHost.ts";
@@ -30,6 +31,18 @@ type TrackerRegistry = Record<BackendName, () => Tracker>;
 
 /** Holistic tracks better overall and is the only source of hand data. */
 const DEFAULT_BACKEND: BackendName = "holistic";
+
+const POSTURES = ["sitting", "standing"] as const;
+/** Most use is at a desk, and it is the framing that needs no leg data. */
+const DEFAULT_POSTURE: PostureMode = "sitting";
+
+/**
+ * How much harder the hips are smoothed in sitting posture.
+ *
+ * They sit at the frame boundary and feed the torso up-axis, so their noise
+ * propagates into the whole upper body. Provisional (SPEC.md 15).
+ */
+const SITTING_HIP_CUTOFF_SCALE = 0.4;
 
 function boot(): void {
   const canvas = document.querySelector<HTMLCanvasElement>("#stage");
@@ -64,6 +77,7 @@ function boot(): void {
   stage.scene.add(stickFigure.object);
 
   const solver = new PoseSolver();
+  solver.options.posture = readSetting<PostureMode>("posture", POSTURES, DEFAULT_POSTURE);
   const pose = createAvatarPose();
   // The rig is driven from the interpolator's pose, not the solver's, so it
   // moves at render rate rather than in 30Hz steps.
@@ -126,6 +140,11 @@ function boot(): void {
     // Visibility has to follow its landmark through the swap, or the solver
     // gates each arm on the other arm's confidence when mirrored.
     mirrorScalars(visibility, frame.visibility, view.mirror);
+    if (solver.options.posture === "sitting") {
+      // Zeroed rather than left alone so the debug overlay dims them too:
+      // these are the landmarks whose confident wrongness motivates the mode.
+      for (const i of LEG_LANDMARKS) visibility[i] = 0;
+    }
     stickFigure.update(points, visibility);
 
     // Mirroring swaps which hand is displayed on which side, exactly as it
@@ -164,6 +183,22 @@ function boot(): void {
   wireFilterControls(panel, filter);
   wireMotionControls(panel, interpolator);
   wireTrackingReadouts(panel, solver);
+  const applyPosture = (posture: PostureMode): void => {
+    solver.options.posture = posture;
+    stage.frameFor(posture);
+
+    // Hallucinated legs stay out of the ground-truth view when nothing is
+    // driving them, so they cannot be mistaken for a solver fault.
+    const showLegs = posture === "standing";
+    stickFigure.setGroupVisible("leftLeg", showLegs);
+    stickFigure.setGroupVisible("rightLeg", showLegs);
+
+    const hipScale = posture === "sitting" ? SITTING_HIP_CUTOFF_SCALE : 1;
+    filter.cutoffScale[LM.LEFT_HIP] = hipScale;
+    filter.cutoffScale[LM.RIGHT_HIP] = hipScale;
+  };
+  applyPosture(solver.options.posture);
+  wirePostureControl(panel, applyPosture, solver.options.posture);
 
   camera.onStateChange((s) => {
     switch (s.kind) {
@@ -347,6 +382,26 @@ function wireFilterControls(panel: DebugPanel, filter: LandmarkFilter): void {
  * fallback. Makes an asymmetry between limbs a number you can read rather
  * than a behaviour you have to interpret.
  */
+/**
+ * Posture is a manual choice, not a detected one (SPEC.md 5.8). Detecting it
+ * would mean reading leg visibility, but the tracker reports confident
+ * visibility for hallucinated out-of-frame legs -- the exact failure being
+ * worked around -- so deciding with that signal is circular.
+ */
+function wirePostureControl(
+  panel: DebugPanel,
+  apply: (posture: PostureMode) => void,
+  initial: PostureMode,
+): void {
+  const folder = panel.folder("Posture");
+  const proxy = { posture: initial };
+  folder.add(proxy, "posture", [...POSTURES]).onChange((value: string) => {
+    const posture = value as PostureMode;
+    writeSetting("posture", posture);
+    apply(posture);
+  });
+}
+
 function wireTrackingReadouts(panel: DebugPanel, solver: PoseSolver): void {
   const bones: HumanBoneName[] = [
     "head",

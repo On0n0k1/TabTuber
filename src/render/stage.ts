@@ -104,6 +104,22 @@ export class Stage {
     this.renderer.setSize(w, h, false);
   };
 
+  /**
+   * Reframes for the subject's posture (SPEC.md 5.8). Sitting frames the
+   * upper body, which is what a desk VTuber's audience sees; standing pulls
+   * back far enough for the whole figure.
+   */
+  frameFor(posture: "sitting" | "standing"): void {
+    if (posture === "standing") {
+      this.camera.position.set(0, SUBJECT_HEIGHT_M * 0.6, 3.4);
+      this.controls.target.set(0, SUBJECT_HEIGHT_M * 0.5, 0);
+    } else {
+      this.camera.position.set(0, SUBJECT_HEIGHT_M * 0.85, 2.1);
+      this.controls.target.set(0, SUBJECT_HEIGHT_M * 0.78, 0);
+    }
+    this.controls.update();
+  }
+
   onFrame(cb: FrameCallback): void {
     this.callbacks.push(cb);
   }

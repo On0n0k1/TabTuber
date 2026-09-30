@@ -157,3 +157,30 @@ export const SOLVER_LANDMARKS: readonly number[] = [
   LM.LEFT_HIP,
   LM.RIGHT_HIP,
 ];
+
+/**
+ * Landmarks the solver reads only in standing posture (SPEC.md 5.8).
+ *
+ * Excluded from the sitting set because a seated subject has these out of
+ * frame, and the tracker reports them confidently rather than absent. Folding
+ * them into confidence there would drag the whole figure down over a lower
+ * body nothing is driving.
+ */
+export const STANDING_LANDMARKS: readonly number[] = [
+  LM.LEFT_KNEE,
+  LM.RIGHT_KNEE,
+  LM.LEFT_ANKLE,
+  LM.RIGHT_ANKLE,
+];
+
+/** Landmarks whose hallucination is the reason sitting mode exists. */
+export const LEG_LANDMARKS: readonly number[] = [
+  LM.LEFT_KNEE,
+  LM.RIGHT_KNEE,
+  LM.LEFT_ANKLE,
+  LM.RIGHT_ANKLE,
+  LM.LEFT_HEEL,
+  LM.RIGHT_HEEL,
+  LM.LEFT_FOOT_INDEX,
+  LM.RIGHT_FOOT_INDEX,
+];

@@ -16,7 +16,7 @@
  */
 
 import { PALM } from "../tracker/handLandmarks.ts";
-import { LM, SOLVER_LANDMARKS } from "../tracker/landmarks.ts";
+import { LM, SOLVER_LANDMARKS, STANDING_LANDMARKS } from "../tracker/landmarks.ts";
 import {
   BONE_INDEX,
   BONE_COUNT,
@@ -47,6 +47,16 @@ import {
   type V3,
 } from "./math.ts";
 
+/**
+ * Which framing the subject is in (SPEC.md 5.8).
+ *
+ * Manual rather than detected: automatic detection would have to read leg
+ * visibility, but the tracker reports confident visibility for hallucinated
+ * out-of-frame legs -- the exact failure being worked around. Deciding with
+ * the broken signal is circular.
+ */
+export type PostureMode = "sitting" | "standing";
+
 export interface SolverOptions {
   /**
    * Share of total torso rotation taken by spine, chest and upperChest.
@@ -59,6 +69,11 @@ export interface SolverOptions {
   neckShare: number;
   /** Derive forearm roll from the hand plane (SPEC.md 5.6). */
   twist: boolean;
+  /**
+   * sitting holds the legs in a standing pose and never drives them, which is
+   * right for a subject at a desk. standing drives them from landmarks.
+   */
+  posture: PostureMode;
   /**
    * Prefer the 21-point palm frame over the pose model's three knuckle
    * estimates when a backend supplies hands. Switchable so the two
@@ -83,6 +98,7 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   torsoSplit: [0.3, 0.3, 0.4],
   neckShare: 0.4,
   twist: true,
+  posture: "sitting",
   useHandLandmarks: true,
   visibilityThreshold: 0.5,
   blendBand: 0.25,
@@ -119,6 +135,31 @@ interface ArmLandmarks {
   index: number;
   pinky: number;
 }
+
+interface LegLandmarks {
+  hip: number;
+  knee: number;
+  ankle: number;
+  foot: number;
+  heel: number;
+}
+
+const LEG: Record<Side, LegLandmarks> = {
+  left: {
+    hip: LM.LEFT_HIP,
+    knee: LM.LEFT_KNEE,
+    ankle: LM.LEFT_ANKLE,
+    foot: LM.LEFT_FOOT_INDEX,
+    heel: LM.LEFT_HEEL,
+  },
+  right: {
+    hip: LM.RIGHT_HIP,
+    knee: LM.RIGHT_KNEE,
+    ankle: LM.RIGHT_ANKLE,
+    foot: LM.RIGHT_FOOT_INDEX,
+    heel: LM.RIGHT_HEEL,
+  },
+};
 
 const ARM: Record<Side, ArmLandmarks> = {
   left: {
@@ -235,7 +276,11 @@ export class PoseSolver {
     timestampMs = 0,
     hands: HandPoints | null = null,
   ): void {
-    pose.confidence = meanVisibility(visibility, SOLVER_LANDMARKS);
+    // Legs count toward confidence only when something is driving them.
+    pose.confidence =
+      this.options.posture === "standing"
+        ? meanVisibility(visibility, [...SOLVER_LANDMARKS, ...STANDING_LANDMARKS])
+        : meanVisibility(visibility, SOLVER_LANDMARKS);
 
     const elapsed = (timestampMs - this.lastTimestampMs) / 1000;
     // Guards the first frame and any timestamp that fails to advance.
@@ -247,8 +292,14 @@ export class PoseSolver {
     this.solveHead(points, visibility, pose, dt);
     this.solveArm(points, visibility, pose, "left", dt, hands?.left ?? null);
     this.solveArm(points, visibility, pose, "right", dt, hands?.right ?? null);
-    // Legs and eyes stay at rest: legs are not driven in the seated profile
-    // (SPEC.md 5.7) and eyes are procedural (SPEC.md section 8).
+
+    if (this.options.posture === "standing") {
+      this.solveLeg(points, visibility, pose, "left", dt);
+      this.solveLeg(points, visibility, pose, "right", dt);
+    }
+    // In sitting posture the legs stay at rest, which is a standing pose for
+    // them, so the character reads as standing regardless of what the
+    // subject's lower body is doing (SPEC.md 5.8). Eyes are procedural (§8).
   }
 
   /** Bones no solver stage writes must be at rest, not stale from last frame. */
@@ -474,6 +525,58 @@ export class PoseSolver {
     // exactly the twist that was just applied to its parent.
     if (twisted) multiply(this.qa, this.qTwist, this.qa);
     this.setBone(pose, handBone, this.qa, this.worldOf(lowerBone), handConfidence, dt);
+  }
+
+  /**
+   * Leg chain, standing posture only.
+   *
+   * Straightforward compared with the arms: no twist is recoverable from
+   * hip/knee/ankle alone, and none is worth faking, so each bone is a swing
+   * from its rest direction. Feet use the ankle-to-toe direction, which is
+   * the noisiest of the three and gated accordingly.
+   */
+  private solveLeg(
+    points: Float32Array,
+    visibility: Float32Array,
+    pose: AvatarPose,
+    side: Side,
+    dt: number,
+  ): void {
+    const lm = LEG[side];
+    const hips = this.worldOf("hips");
+    const upperBone = `${side}UpperLeg` as HumanBoneName;
+    const lowerBone = `${side}LowerLeg` as HumanBoneName;
+    const footBone = `${side}Foot` as HumanBoneName;
+
+    readPoint(this.pa, points, lm.hip);
+    readPoint(this.pb, points, lm.knee);
+    normalize(this.axisX, sub(this.axisX, this.pb, this.pa));
+    fromUnitVectors(this.qa, restDirOf(upperBone), this.axisX);
+    this.setBone(pose, upperBone, this.qa, hips, meanVisibility(visibility, [lm.hip, lm.knee]), dt);
+
+    readPoint(this.pc, points, lm.ankle);
+    normalize(this.axisY, sub(this.axisY, this.pc, this.pb));
+    fromUnitVectors(this.qb, restDirOf(lowerBone), this.axisY);
+    this.setBone(
+      pose,
+      lowerBone,
+      this.qb,
+      this.worldOf(upperBone),
+      meanVisibility(visibility, [lm.knee, lm.ankle]),
+      dt,
+    );
+
+    readPoint(this.pa, points, lm.foot);
+    normalize(this.axisZ, sub(this.axisZ, this.pa, this.pc));
+    fromUnitVectors(this.qa, restDirOf(footBone), this.axisZ);
+    this.setBone(
+      pose,
+      footBone,
+      this.qa,
+      this.worldOf(lowerBone),
+      meanVisibility(visibility, [lm.ankle, lm.heel, lm.foot]),
+      dt,
+    );
   }
 
   private usePalmFrame(hand: Float32Array | null): boolean {

@@ -54,6 +54,18 @@ export class LandmarkFilter {
   xy: OneEuroParams = { ...DEFAULT_XY_PARAMS };
   z: OneEuroParams = { ...DEFAULT_Z_PARAMS };
 
+  /**
+   * Per-landmark multiplier on minCutoff. Below 1 smooths that landmark
+   * harder than the rest.
+   *
+   * Exists because not all landmarks are equally trustworthy. The hips sit at
+   * the frame boundary for a seated subject and feed the torso up-axis, so
+   * their noise propagates into the whole upper body (SPEC.md 5.8). Only
+   * minCutoff is scaled, not beta: the aim is more smoothing while still,
+   * without making a landmark unresponsive to genuine fast motion.
+   */
+  readonly cutoffScale: Float32Array;
+
   private readonly count: number;
   private readonly value: Float32Array;
   private readonly derivative: Float32Array;
@@ -65,6 +77,7 @@ export class LandmarkFilter {
   // run directly under node without a build step.
   constructor(count: number) {
     this.count = count;
+    this.cutoffScale = new Float32Array(count).fill(1);
     this.value = new Float32Array(count * 3);
     this.derivative = new Float32Array(count * 3);
   }
@@ -107,6 +120,7 @@ export class LandmarkFilter {
 
     for (let i = 0; i < this.count; i++) {
       const base = i * 3;
+      const scale = this.cutoffScale[i] ?? 1;
       for (let axis = 0; axis < 3; axis++) {
         const k = base + axis;
         const params = axis === 2 ? this.z : this.xy;
@@ -120,7 +134,7 @@ export class LandmarkFilter {
           dAlpha * rate + (1 - dAlpha) * (this.derivative[k] ?? 0);
         this.derivative[k] = smoothedRate;
 
-        const cutoff = params.minCutoff + params.beta * Math.abs(smoothedRate);
+        const cutoff = params.minCutoff * scale + params.beta * Math.abs(smoothedRate);
         const alpha = smoothingAlpha(cutoff, dt);
         const filtered = alpha * x + (1 - alpha) * prev;
 

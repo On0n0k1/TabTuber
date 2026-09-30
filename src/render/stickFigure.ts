@@ -82,6 +82,20 @@ export class StickFigure {
     this.object.visible = v;
   }
 
+  /**
+   * Hides a region of the ground-truth view.
+   *
+   * Used for the legs in sitting posture: the tracker emits confident but
+   * wrong positions for out-of-frame legs, and leaving them drawn invites
+   * mistaking hallucinated lower-body motion for a solver fault (SPEC.md 5.8).
+   * The joint markers stay, since they carry visibility and are how the
+   * hallucination can still be inspected deliberately.
+   */
+  setGroupVisible(group: ConnectionGroup, visible: boolean): void {
+    const line = this.segments.get(group);
+    if (line) line.visible = visible;
+  }
+
   /** `points` is LANDMARK_COUNT * 3 in three.js space, from mpToThree. */
   update(points: Float32Array, visibility: Float32Array): void {
     for (const group of CONNECTION_GROUPS) {

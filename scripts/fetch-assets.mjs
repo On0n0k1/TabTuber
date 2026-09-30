@@ -38,8 +38,22 @@ if (!name) {
   process.exit(1);
 }
 
-const url = `https://storage.googleapis.com/mediapipe-models/pose_landmarker/${name}/float16/latest/${name}.task`;
-const dest = join(root, "public/models", `${name}.task`);
+/**
+ * Both backends are kept available at runtime so body tracking can be
+ * compared between them and rolled back (SPEC.md 5.6), so both models are
+ * staged. Holistic is the larger of the two: it bundles pose, both hands and
+ * face in one asset.
+ */
+const DOWNLOADS = [
+  {
+    file: `${name}.task`,
+    url: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/${name}/float16/latest/${name}.task`,
+  },
+  {
+    file: "holistic_landmarker.task",
+    url: "https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task",
+  },
+];
 
 async function exists(path) {
   try {
@@ -50,18 +64,16 @@ async function exists(path) {
   }
 }
 
-async function main() {
-  await mkdir(dirname(WASM_DEST), { recursive: true });
-  await cp(WASM_SRC, WASM_DEST, { recursive: true });
-  console.log(`wasm  -> public/mediapipe/wasm`);
+async function download({ file, url }) {
+  const dest = join(root, "public/models", file);
 
   if (await exists(dest)) {
-    console.log(`model -> public/models/${name}.task (cached)`);
+    console.log(`model -> public/models/${file} (cached)`);
     return;
   }
 
   await mkdir(dirname(dest), { recursive: true });
-  console.log(`model -> fetching ${name} ...`);
+  console.log(`model -> fetching ${file} ...`);
 
   const res = await fetch(url);
   if (!res.ok || !res.body) {
@@ -70,7 +82,15 @@ async function main() {
   await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
 
   const { size } = await stat(dest);
-  console.log(`model -> public/models/${name}.task (${(size / 1e6).toFixed(1)} MB)`);
+  console.log(`model -> public/models/${file} (${(size / 1e6).toFixed(1)} MB)`);
+}
+
+async function main() {
+  await mkdir(dirname(WASM_DEST), { recursive: true });
+  await cp(WASM_SRC, WASM_DEST, { recursive: true });
+  console.log(`wasm  -> public/mediapipe/wasm`);
+
+  for (const item of DOWNLOADS) await download(item);
 }
 
 await main();

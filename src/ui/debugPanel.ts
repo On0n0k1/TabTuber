@@ -24,6 +24,7 @@ interface Readouts {
   /** Inference time alone. End-to-end latency lands with SPEC.md section 9. */
   inference: string;
   delegate: string;
+  backend: string;
   confidence: string;
 }
 
@@ -37,6 +38,7 @@ export interface DebugPanelOptions {
     trackerFps: number;
     inferenceMs: number;
     delegate: string;
+    backend: string;
     confidence: number;
   };
 }
@@ -54,6 +56,7 @@ export class DebugPanel {
     trackerFps: "-",
     inference: "-",
     delegate: "-",
+    backend: "-",
     confidence: "-",
   };
 
@@ -143,6 +146,7 @@ export class DebugPanel {
     this.readouts.trackerFps = s.trackerFps > 0 ? s.trackerFps.toFixed(0) : "-";
     this.readouts.inference = s.inferenceMs > 0 ? `${s.inferenceMs.toFixed(1)} ms` : "-";
     this.readouts.delegate = s.delegate;
+    this.readouts.backend = s.backend;
     this.readouts.confidence = s.confidence > 0 ? s.confidence.toFixed(2) : "-";
 
     for (const group of this.readoutGroups) {

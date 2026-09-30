@@ -14,7 +14,10 @@ import { Stage } from "./render/stage.ts";
 import { mirrorScalars, mpToThree } from "./solver/coords.ts";
 import { PoseSolver } from "./solver/poseSolver.ts";
 import { BONE_INDEX, type HumanBoneName } from "./types.ts";
+import { HolisticTracker } from "./tracker/holisticTracker.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
+import type { Tracker } from "./tracker/tracker.ts";
+import { TrackerHost } from "./tracker/trackerHost.ts";
 import { createAvatarPose, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
@@ -31,7 +34,11 @@ function boot(): void {
 
   const stage = new Stage(canvas);
   const camera = new Camera();
-  const tracker = new PoseTracker();
+  const trackers: Record<string, () => Tracker> = {
+    pose: () => new PoseTracker(),
+    holistic: () => new HolisticTracker(),
+  };
+  const host = new TrackerHost();
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
 
@@ -75,13 +82,14 @@ function boot(): void {
       // a last value, so a stalled camera or tracker is visible in the panel.
       cameraFps: cameraFps.staleAfter(1000),
       trackerFps: trackerFps.staleAfter(1000),
-      inferenceMs: tracker.inferenceMs,
-      delegate: tracker.ready ? tracker.delegate : "-",
+      inferenceMs: host.current?.inferenceMs ?? 0,
+      delegate: host.current?.ready ? host.current.delegate : "-",
+      backend: host.current?.name ?? "-",
       confidence: interpolator.current.confidence,
     }),
   });
 
-  tracker.onFrame((frame) => {
+  host.onFrame((frame) => {
     trackerFps.tick();
     if (previewW > 0) overlay.draw(frame, previewW, previewH);
 
@@ -129,7 +137,7 @@ function boot(): void {
           previewH = h;
           overlay.resize(w, h);
         });
-        if (tracker.ready) tracker.attach(s.video);
+        host.setVideo(s.video);
         break;
       case "error":
         banner.show("error", s.message, {
@@ -155,32 +163,61 @@ function boot(): void {
   });
   stage.start();
 
-  void startPipeline(camera, tracker, banner);
+  wireBackendControl(panel, host, trackers);
+  void startPipeline(camera, host, banner);
 }
 
 /**
- * The model is ~9MB, so the first load is a real wait. The banner reports it
- * rather than leaving the page looking broken while nothing happens.
+ * Lets the tracking backend be swapped while running.
+ *
+ * Holistic adds real hand landmarks but bundles its own pose model, and
+ * whether its body tracking matches pose_landmarker_full is unverified.
+ * Switching live is how that gets settled by observation -- watch the Stats
+ * folder while flipping -- rather than by argument (SPEC.md 5.6).
+ */
+function wireBackendControl(
+  panel: DebugPanel,
+  host: TrackerHost,
+  trackers: Record<string, () => Tracker>,
+): void {
+  const folder = panel.folder("Backend");
+  const proxy = { backend: "pose" };
+  folder
+    .add(proxy, "backend", Object.keys(trackers))
+    .onChange((name: string) => {
+      const factory = trackers[name];
+      if (factory) void host.use(name, factory);
+    });
+}
+
+/**
+ * Models are 9 to 14MB, so the first load of each is a real wait. The banner
+ * reports it rather than leaving the page looking broken while nothing
+ * happens.
  */
 async function startPipeline(
   camera: Camera,
-  tracker: PoseTracker,
+  host: TrackerHost,
   banner: StatusBanner,
 ): Promise<void> {
-  banner.show("busy", "Loading pose model...");
-  try {
-    await tracker.init();
-  } catch (err) {
-    banner.show("error", `Pose model failed to load: ${String(err)}`);
-    return;
-  }
+  host.onStatus((s) => {
+    switch (s.kind) {
+      case "loading":
+        banner.show("busy", `Loading ${s.name} model...`);
+        break;
+      case "active":
+        banner.hide();
+        break;
+      case "error":
+        banner.show("error", `${s.name} model failed to load: ${s.message}`);
+        break;
+      case "idle":
+        break;
+    }
+  });
 
+  await host.use("pose", () => new PoseTracker());
   await camera.start();
-
-  // The camera may have become ready before init() resolved, in which case
-  // the state handler could not attach yet.
-  const state = camera.state;
-  if (state.kind === "ready") tracker.attach(state.video);
 }
 
 /**

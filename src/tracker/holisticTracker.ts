@@ -1,0 +1,141 @@
+/*
+ * HolisticLandmarker backend: body plus both hands in one graph.
+ *
+ * Chosen over adding HandLandmarker as a second graph because Holistic
+ * returns the hands already separated by side, derived from the same body.
+ * A standalone hand model detects hands independently, so each one has to be
+ * matched back to an arm -- via a handedness classifier that flips when hands
+ * are close together, or nearest-wrist matching that has to stay consistent
+ * with the mirror swap. Holistic removes that problem rather than solving it.
+ *
+ * Face landmarks come back whether or not they are wanted, but blendshapes
+ * are opt-in and stay off while face tracking is deferred (SPEC.md 11).
+ */
+
+import {
+  HolisticLandmarker,
+  type HolisticLandmarkerResult,
+  type Landmark,
+} from "@mediapipe/tasks-vision";
+import {
+  HAND_LANDMARK_COUNT,
+  LANDMARK_COUNT,
+  type HandFrame,
+  type PoseFrame,
+} from "../types.ts";
+import { VideoTracker, visionFileset, type TrackerDelegate } from "./tracker.ts";
+
+const MODEL_PATH = "/models/holistic_landmarker.task";
+
+export interface HolisticTrackerOptions {
+  readonly minPoseDetectionConfidence?: number;
+  readonly minPosePresenceConfidence?: number;
+  readonly minHandLandmarksConfidence?: number;
+}
+
+/** Mutable hand buffer; the frame exposes it as a readonly HandFrame. */
+interface HandBuffer {
+  world: Float32Array;
+  present: boolean;
+}
+
+export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
+  override readonly name = "holistic";
+  override readonly tracksHands = true;
+
+  private readonly options: HolisticTrackerOptions;
+
+  private readonly world = new Float32Array(LANDMARK_COUNT * 3);
+  private readonly image = new Float32Array(LANDMARK_COUNT * 3);
+  private readonly visibility = new Float32Array(LANDMARK_COUNT);
+  private readonly left: HandBuffer = {
+    world: new Float32Array(HAND_LANDMARK_COUNT * 3),
+    present: false,
+  };
+  private readonly right: HandBuffer = {
+    world: new Float32Array(HAND_LANDMARK_COUNT * 3),
+    present: false,
+  };
+
+  constructor(options: HolisticTrackerOptions = {}) {
+    super();
+    this.options = options;
+  }
+
+  protected override async build(delegate: TrackerDelegate): Promise<HolisticLandmarker> {
+    const fileset = await visionFileset();
+    return HolisticLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: MODEL_PATH, delegate },
+      runningMode: "VIDEO",
+      minPoseDetectionConfidence: this.options.minPoseDetectionConfidence ?? 0.6,
+      minPosePresenceConfidence: this.options.minPosePresenceConfidence ?? 0.6,
+      minHandLandmarksConfidence: this.options.minHandLandmarksConfidence ?? 0.5,
+      // Off while face tracking is deferred. Face landmarks are produced
+      // regardless; only the blendshape classifier is optional.
+      outputFaceBlendshapes: false,
+      outputPoseSegmentationMasks: false,
+    });
+  }
+
+  protected override process(
+    landmarker: HolisticLandmarker,
+    video: HTMLVideoElement,
+    timestampMs: number,
+  ): PoseFrame | null {
+    const result: HolisticLandmarkerResult = landmarker.detectForVideo(video, timestampMs);
+
+    const world = result.poseWorldLandmarks[0];
+    const image = result.poseLandmarks[0];
+    if (!world || !image) return null;
+
+    for (let i = 0; i < LANDMARK_COUNT; i++) {
+      const w = world[i];
+      const p = image[i];
+      if (!w || !p) continue;
+
+      const o = i * 3;
+      this.world[o] = w.x;
+      this.world[o + 1] = w.y;
+      this.world[o + 2] = w.z;
+
+      this.image[o] = p.x;
+      this.image[o + 1] = p.y;
+      this.image[o + 2] = p.z;
+
+      this.visibility[i] = p.visibility ?? 1;
+    }
+
+    fillHand(this.left, result.leftHandWorldLandmarks[0]);
+    fillHand(this.right, result.rightHandWorldLandmarks[0]);
+
+    return {
+      world: this.world,
+      image: this.image,
+      visibility: this.visibility,
+      timestampMs,
+      leftHand: this.left as HandFrame,
+      rightHand: this.right as HandFrame,
+    };
+  }
+}
+
+/**
+ * Holistic labels hands by the SUBJECT's side, the same convention as the
+ * pose landmarks, so no reassignment is needed here. Mirroring is applied
+ * downstream in the coordinate conversion, as for everything else.
+ */
+function fillHand(buffer: HandBuffer, landmarks: Landmark[] | undefined): void {
+  if (!landmarks || landmarks.length < HAND_LANDMARK_COUNT) {
+    buffer.present = false;
+    return;
+  }
+  for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+    const lm = landmarks[i];
+    if (!lm) continue;
+    const o = i * 3;
+    buffer.world[o] = lm.x;
+    buffer.world[o + 1] = lm.y;
+    buffer.world[o + 2] = lm.z;
+  }
+  buffer.present = true;
+}

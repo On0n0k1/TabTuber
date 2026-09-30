@@ -16,6 +16,8 @@ import { LM } from "../tracker/landmarks.ts";
 import { HIP_HEIGHT_M, mirrorScalars, mpToThree } from "./coords.ts";
 import { BONE_INDEX, LANDMARK_COUNT, createAvatarPose, type HumanBoneName } from "../types.ts";
 import { PoseSolver } from "./poseSolver.ts";
+import { HAND } from "../tracker/handLandmarks.ts";
+import { HAND_LANDMARK_COUNT } from "../types.ts";
 import { rotateV3, setAxisAngle, quat, v3, type Q4, type V3 } from "./math.ts";
 
 let failures = 0;
@@ -234,6 +236,81 @@ check("mirrored: the bend moves to the right", mirroredRight > 10 && mirroredLef
   `L=${mirroredLeft.toFixed(1)} R=${mirroredRight.toFixed(1)}`);
 check("mirrored: the bend keeps its magnitude", Math.abs(mirroredRight - unmirroredLeft) < 0.5,
   `${unmirroredLeft.toFixed(2)} vs ${mirroredRight.toFixed(2)}`);
+
+// --- 5b. Palm frame: hand orientation from 21 landmarks --------------------
+//
+// Only differences matter, so these are written in body-relative coordinates
+// even though Holistic centres hand world landmarks on the hand itself.
+
+/** A palm-down hand in T-pose: fingers along the arm, thumb forward (+Z). */
+function restHand(side: "left" | "right"): Float32Array {
+  const h = new Float32Array(HAND_LANDMARK_COUNT * 3);
+  const s = side === "left" ? 1 : -1;
+  const set = (i: number, x: number, y: number, z: number): void => {
+    h[i * 3] = x; h[i * 3 + 1] = y; h[i * 3 + 2] = z;
+  };
+  set(HAND.WRIST, 0.65 * s, 1.4, 0);
+  set(HAND.MIDDLE_MCP, 0.73 * s, 1.4, 0);
+  // Index sits on the thumb side (+Z), pinky opposite, for BOTH hands.
+  set(HAND.INDEX_MCP, 0.73 * s, 1.4, 0.02);
+  set(HAND.PINKY_MCP, 0.73 * s, 1.4, -0.02);
+  return h;
+}
+
+{
+  const hands = { left: restHand("left"), right: restHand("right") };
+  const s = new PoseSolver();
+  s.solve(rest, visible, pose, 0, hands);
+
+  for (const bone of ["leftHand", "rightHand"] as HumanBoneName[]) {
+    check(`palm frame: ${bone} is identity at rest`,
+      isIdentity(boneQuat(pose.rotations, bone), 1e-3),
+      JSON.stringify(boneQuat(pose.rotations, bone).map((n) => +n.toFixed(4))));
+  }
+  // The per-side sign is the same mirror trap as the body basis, so the
+  // forearm must not pick up a spurious roll either.
+  for (const bone of ["leftLowerArm", "rightLowerArm"] as HumanBoneName[]) {
+    check(`palm frame: ${bone} takes no spurious twist at rest`,
+      isIdentity(boneQuat(pose.rotations, bone), 1e-3),
+      JSON.stringify(boneQuat(pose.rotations, bone).map((n) => +n.toFixed(4))));
+  }
+}
+
+// Rolling the palm must roll the forearm, which is the whole point.
+{
+  const roll = quat();
+  setAxisAngle(roll, [1, 0, 0], (40 * Math.PI) / 180);
+  const h = restHand("left");
+  const out = v3();
+  for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+    // Rotate about the arm axis, pivoting at the wrist.
+    rotateV3(out, roll, [(h[i * 3] ?? 0) - 0.65, (h[i * 3 + 1] ?? 0) - 1.4, h[i * 3 + 2] ?? 0]);
+    h[i * 3] = out[0] + 0.65;
+    h[i * 3 + 1] = out[1] + 1.4;
+    h[i * 3 + 2] = out[2];
+  }
+
+  const s = new PoseSolver();
+  s.solve(rest, visible, pose, 0, { left: h, right: null });
+  const twist = angleOf(boneQuat(pose.rotations, "leftLowerArm"));
+  check("palm frame: a 40deg palm roll rolls the forearm",
+    Math.abs(twist - 40) < 3, `${twist.toFixed(1)}deg`);
+}
+
+// Missing hands must fall back to the pose-model derivation, not break.
+{
+  const s = new PoseSolver();
+  s.solve(rest, visible, pose, 0, { left: null, right: null });
+  check("palm frame: absent hands fall back cleanly",
+    isIdentity(boneQuat(pose.rotations, "leftHand"), 1e-3),
+    JSON.stringify(boneQuat(pose.rotations, "leftHand").map((n) => +n.toFixed(4))));
+
+  const off = new PoseSolver();
+  off.options.useHandLandmarks = false;
+  off.solve(rest, visible, pose, 0, { left: restHand("left"), right: restHand("right") });
+  check("palm frame: can be disabled for comparison",
+    isIdentity(boneQuat(pose.rotations, "leftHand"), 1e-3));
+}
 
 // --- 6. Degradation: per-bone gating, hold, then decay to relaxed ----------
 //

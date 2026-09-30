@@ -15,6 +15,7 @@
  * (SPEC.md section 2).
  */
 
+import { PALM } from "../tracker/handLandmarks.ts";
 import { LM, SOLVER_LANDMARKS } from "../tracker/landmarks.ts";
 import {
   BONE_INDEX,
@@ -58,6 +59,12 @@ export interface SolverOptions {
   neckShare: number;
   /** Derive forearm roll from the hand plane (SPEC.md 5.6). */
   twist: boolean;
+  /**
+   * Prefer the 21-point palm frame over the pose model's three knuckle
+   * estimates when a backend supplies hands. Switchable so the two
+   * derivations can be compared directly.
+   */
+  useHandLandmarks: boolean;
   /** At or above this mean visibility a bone is fully driven (SPEC.md 5.7). */
   visibilityThreshold: number;
   /**
@@ -76,6 +83,7 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   torsoSplit: [0.3, 0.3, 0.4],
   neckShare: 0.4,
   twist: true,
+  useHandLandmarks: true,
   visibilityThreshold: 0.5,
   blendBand: 0.25,
   holdSeconds: 0.4,
@@ -89,7 +97,20 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
  */
 const TWIST_SIGN = { left: 1, right: -1 } as const;
 
+/**
+ * The palm frame is mirror-symmetric between hands, so one side's basis comes
+ * out left-handed without a sign flip. Verified against a synthetic palm-down
+ * T-pose in the solver checks.
+ */
+const HAND_SIGN = { left: 1, right: -1 } as const;
+
 type Side = "left" | "right";
+
+/** Hand landmarks already converted to three.js space, or null if unavailable. */
+export interface HandPoints {
+  readonly left: Float32Array | null;
+  readonly right: Float32Array | null;
+}
 
 interface ArmLandmarks {
   shoulder: number;
@@ -174,6 +195,10 @@ export class PoseSolver {
   private readonly sc = v3();
   private readonly ref = v3();
   private readonly normal = v3();
+  private readonly palmX = v3();
+  private readonly palmY = v3();
+  private readonly palmZ = v3();
+  private readonly qPalm = quat();
   private readonly qa = quat();
   private readonly qb = quat();
   private readonly qTwist = quat();
@@ -208,6 +233,7 @@ export class PoseSolver {
     visibility: Float32Array,
     pose: AvatarPose,
     timestampMs = 0,
+    hands: HandPoints | null = null,
   ): void {
     pose.confidence = meanVisibility(visibility, SOLVER_LANDMARKS);
 
@@ -219,8 +245,8 @@ export class PoseSolver {
     this.resetAll(pose);
     this.solveTorso(points, pose, dt);
     this.solveHead(points, visibility, pose, dt);
-    this.solveArm(points, visibility, pose, "left", dt);
-    this.solveArm(points, visibility, pose, "right", dt);
+    this.solveArm(points, visibility, pose, "left", dt, hands?.left ?? null);
+    this.solveArm(points, visibility, pose, "right", dt, hands?.right ?? null);
     // Legs and eyes stay at rest: legs are not driven in the seated profile
     // (SPEC.md 5.7) and eyes are procedural (SPEC.md section 8).
   }
@@ -391,6 +417,7 @@ export class PoseSolver {
     pose: AvatarPose,
     side: Side,
     dt: number,
+    hand: Float32Array | null,
   ): void {
     const lm = ARM[side];
     const upperChest = this.worldOf("upperChest");
@@ -421,11 +448,25 @@ export class PoseSolver {
     normalize(this.axisY, sub(this.axisY, this.pc, this.pb));
     fromUnitVectors(this.qb, restDirOf(lowerBone), this.axisY);
 
-    const twisted = this.computeTwist(points, visibility, lm, side, this.qb, this.axisY);
+    // A real palm frame beats the pose model's three knuckle estimates for
+    // both roll and hand direction, so it is preferred when available.
+    const palm = this.usePalmFrame(hand) ? this.solvePalm(hand as Float32Array, side) : false;
+
+    const twisted = palm
+      ? this.twistFromPalm(this.qb, this.axisY)
+      : this.computeTwist(points, visibility, lm, side, this.qb, this.axisY);
     if (twisted) multiply(this.qb, this.qTwist, this.qb);
     this.setBone(pose, lowerBone, this.qb, this.worldOf(upperBone), lowerConfidence, dt);
 
-    // Hand: wrist -> midpoint of index and pinky.
+    if (palm) {
+      // The palm frame is already a full orientation, so it is used directly
+      // rather than being rebuilt from a direction plus a separate twist.
+      this.setBone(pose, handBone, this.qPalm, this.worldOf(lowerBone), handConfidence, dt);
+      return;
+    }
+
+    // Fallback: wrist -> midpoint of index and pinky. An 8cm vector from
+    // low-fidelity landmarks, which is why the palm frame is preferred.
     midpoint(this.handMid, points, lm.index, lm.pinky);
     normalize(this.axisZ, sub(this.axisZ, this.handMid, this.pc));
     fromUnitVectors(this.qa, restDirOf(handBone), this.axisZ);
@@ -433,6 +474,71 @@ export class PoseSolver {
     // exactly the twist that was just applied to its parent.
     if (twisted) multiply(this.qa, this.qTwist, this.qa);
     this.setBone(pose, handBone, this.qa, this.worldOf(lowerBone), handConfidence, dt);
+  }
+
+  private usePalmFrame(hand: Float32Array | null): boolean {
+    return this.options.useHandLandmarks && hand !== null;
+  }
+
+  /**
+   * Full hand orientation from the 21-point palm.
+   *
+   * Wrist to middle knuckle is the hand's long axis and index-to-pinky
+   * knuckle spans the palm. Those are close to perpendicular and both span
+   * most of the hand, so the basis is well conditioned -- unlike the pose
+   * model's index and pinky knuckles, which sit about 30 degrees apart and
+   * yield a normal dominated by noise (SPEC.md 5.6).
+   *
+   * Writes `qPalm` and returns false if the landmarks are degenerate.
+   */
+  private solvePalm(hand: Float32Array, side: Side): boolean {
+    readPoint(this.pa, hand, PALM.ORIGIN);
+    readPoint(this.pb, hand, PALM.FORWARD);
+    readPoint(this.sa, hand, PALM.INDEX_SIDE);
+    readPoint(this.sb, hand, PALM.PINKY_SIDE);
+
+    sub(this.palmX, this.pb, this.pa);
+    sub(this.sc, this.sb, this.sa);
+    if (vectorLength(this.palmX) < 1e-5 || vectorLength(this.sc) < 1e-5) return false;
+
+    const sign = HAND_SIGN[side];
+    normalize(this.palmX, this.palmX);
+    normalize(this.sc, this.sc);
+
+    // up = forward x across, with the per-side flip that keeps both hands
+    // right-handed; the hands are mirror images of each other.
+    cross(this.palmY, this.palmX, this.sc);
+    if (vectorLength(this.palmY) < 1e-4) return false;
+    normalize(this.palmY, this.palmY);
+
+    this.palmX[0] *= sign;
+    this.palmX[1] *= sign;
+    this.palmX[2] *= sign;
+    this.palmY[0] *= sign;
+    this.palmY[1] *= sign;
+    this.palmY[2] *= sign;
+
+    // Re-orthogonalise: landmark-derived axes never are exactly.
+    normalize(this.palmZ, cross(this.palmZ, this.palmX, this.palmY));
+    normalize(this.palmY, cross(this.palmY, this.palmZ, this.palmX));
+
+    fromBasis(this.qPalm, this.palmX, this.palmY, this.palmZ);
+    return true;
+  }
+
+  /**
+   * Forearm roll measured against the palm frame rather than the pose
+   * model's three knuckles. Same method, far better input.
+   */
+  private twistFromPalm(swing: Readonly<Q4>, boneAxis: Readonly<V3>): boolean {
+    if (!this.options.twist) return false;
+
+    rotateV3(this.ref, swing, [0, 1, 0]);
+    const angle = signedAngleAbout(this.ref, this.palmY, boneAxis, this.sa, this.sb, this.sc);
+    if (!Number.isFinite(angle)) return false;
+
+    setAxisAngle(this.qTwist, boneAxis, angle);
+    return true;
   }
 
   /**
@@ -481,6 +587,10 @@ export class PoseSolver {
     setAxisAngle(this.qTwist, boneAxis, angle);
     return true;
   }
+}
+
+function vectorLength(a: Readonly<V3>): number {
+  return Math.hypot(a[0], a[1], a[2]);
 }
 
 function normalizeLength(a: Readonly<V3>): number {

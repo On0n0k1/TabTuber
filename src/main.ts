@@ -11,14 +11,14 @@ import { DebugRig } from "./render/debugRig.ts";
 import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
-import { mirrorScalars, mpToThree } from "./solver/coords.ts";
+import { handToThree, mirrorScalars, mpToThree } from "./solver/coords.ts";
 import { PoseSolver } from "./solver/poseSolver.ts";
 import { BONE_INDEX, type HumanBoneName } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
 import type { Tracker } from "./tracker/tracker.ts";
 import { TrackerHost } from "./tracker/trackerHost.ts";
-import { createAvatarPose, LANDMARK_COUNT } from "./types.ts";
+import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
@@ -59,6 +59,14 @@ function boot(): void {
   const filteredWorld = new Float32Array(LANDMARK_COUNT * 3);
   const points = new Float32Array(LANDMARK_COUNT * 3);
   const visibility = new Float32Array(LANDMARK_COUNT);
+
+  // Hand landmarks, when the active backend supplies them.
+  const leftHandPoints = new Float32Array(HAND_LANDMARK_COUNT * 3);
+  const rightHandPoints = new Float32Array(HAND_LANDMARK_COUNT * 3);
+  const handPoints: { left: Float32Array | null; right: Float32Array | null } = {
+    left: null,
+    right: null,
+  };
 
   // Mirrored by default: the usual VTubing preference, and the only place
   // the choice is applied is mpToThree (SPEC.md 5.1).
@@ -102,7 +110,26 @@ function boot(): void {
     mirrorScalars(visibility, frame.visibility, view.mirror);
     stickFigure.update(points, visibility);
 
-    solver.solve(points, visibility, pose, frame.timestampMs);
+    // Mirroring swaps which hand is displayed on which side, exactly as it
+    // swaps the body's left/right landmarks. Reflecting without the swap
+    // would hand the solver a left hand labelled right.
+    const sourceLeft = view.mirror ? frame.rightHand : frame.leftHand;
+    const sourceRight = view.mirror ? frame.leftHand : frame.rightHand;
+
+    if (sourceLeft?.present) {
+      handToThree(leftHandPoints, sourceLeft.world, view.mirror);
+      handPoints.left = leftHandPoints;
+    } else {
+      handPoints.left = null;
+    }
+    if (sourceRight?.present) {
+      handToThree(rightHandPoints, sourceRight.world, view.mirror);
+      handPoints.right = rightHandPoints;
+    } else {
+      handPoints.right = null;
+    }
+
+    solver.solve(points, visibility, pose, frame.timestampMs, handPoints);
     pose.timestampMs = frame.timestampMs;
     interpolator.setTarget(pose);
   });
@@ -264,6 +291,7 @@ function wireSolverControls(
 
   folder.add(solver.options, "neckShare", 0, 1, 0.05);
   folder.add(solver.options, "twist");
+  folder.add(solver.options, "useHandLandmarks").name("use palm frame");
 
   // Degradation constants (SPEC.md 5.7). All provisional and only settleable
   // by watching a limb actually leave frame.

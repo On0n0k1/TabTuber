@@ -72,6 +72,30 @@ export function mpToThree(
 }
 
 /**
+ * Converts hand landmarks into three.js space.
+ *
+ * Orientation only, so the origin is irrelevant and no grounding offset is
+ * applied -- Holistic centres hand world landmarks on the hand itself, not on
+ * the body. There is no index remap: a hand's own topology has no left/right
+ * pairs, and reflecting a left hand's points yields a correctly-shaped right
+ * hand with the same indices. Which BUFFER is treated as which side is the
+ * caller's decision, and must be swapped alongside the body (see main.ts).
+ */
+export function handToThree(
+  out: Float32Array,
+  world: Float32Array,
+  mirror: boolean,
+): void {
+  const sx = mirror ? -1 : 1;
+  for (let i = 0; i < out.length / 3; i++) {
+    const o = i * 3;
+    out[o] = (world[o] ?? 0) * sx;
+    out[o + 1] = -(world[o + 1] ?? 0);
+    out[o + 2] = -(world[o + 2] ?? 0);
+  }
+}
+
+/**
  * Applies the same left/right swap to a per-landmark scalar array.
  *
  * Visibility must travel with its landmark. Without this, the solver would

@@ -63,6 +63,9 @@ export class DebugPanel {
     preview: true,
   };
 
+  /** Sampled groups added by other modules, refreshed each frame. */
+  private readonly readoutGroups: { proxy: Record<string, string>; labels: readonly string[]; sample: () => readonly number[]; digits: number }[] = [];
+
   private readonly cameraFolder;
   private readonly viewFolder: GUI;
   private deviceController: ReturnType<GUI["add"]> | null = null;
@@ -141,11 +144,42 @@ export class DebugPanel {
     this.readouts.inference = s.inferenceMs > 0 ? `${s.inferenceMs.toFixed(1)} ms` : "-";
     this.readouts.delegate = s.delegate;
     this.readouts.confidence = s.confidence > 0 ? s.confidence.toFixed(2) : "-";
+
+    for (const group of this.readoutGroups) {
+      const values = group.sample();
+      for (let i = 0; i < group.labels.length; i++) {
+        const label = group.labels[i];
+        if (label === undefined) continue;
+        group.proxy[label] = (values[i] ?? 0).toFixed(group.digits);
+      }
+    }
   }
 
   /** Exposed so later stages can add their own folders without owning the GUI. */
   folder(name: string): GUI {
     return this.gui.addFolder(name);
+  }
+
+  /**
+   * A folder of live numeric readouts, pulled each frame.
+   *
+   * Used for per-bone tracking weights: when a limb misbehaves, seeing the
+   * number it is being driven by beats inferring it from the motion, which is
+   * how a left/right difference went unexplained for a while.
+   */
+  addReadoutGroup(
+    name: string,
+    labels: readonly string[],
+    sample: () => readonly number[],
+    digits = 2,
+  ): void {
+    const folder = this.gui.addFolder(name);
+    const proxy: Record<string, string> = {};
+    for (const label of labels) {
+      proxy[label] = "-";
+      folder.add(proxy, label).listen().disable();
+    }
+    this.readoutGroups.push({ proxy, labels, sample, digits });
   }
 
   /**

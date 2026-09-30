@@ -13,6 +13,7 @@ import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
 import { mirrorScalars, mpToThree } from "./solver/coords.ts";
 import { PoseSolver } from "./solver/poseSolver.ts";
+import { BONE_INDEX, type HumanBoneName } from "./types.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
 import { createAvatarPose, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
@@ -109,6 +110,7 @@ function boot(): void {
   wireSolverControls(panel, solver, view, stickFigure, debugRig);
   wireFilterControls(panel, filter);
   wireMotionControls(panel, interpolator);
+  wireTrackingReadouts(panel, solver);
 
   camera.onStateChange((s) => {
     switch (s.kind) {
@@ -225,7 +227,13 @@ function wireSolverControls(
 
   folder.add(solver.options, "neckShare", 0, 1, 0.05);
   folder.add(solver.options, "twist");
+
+  // Degradation constants (SPEC.md 5.7). All provisional and only settleable
+  // by watching a limb actually leave frame.
   folder.add(solver.options, "visibilityThreshold", 0, 1, 0.05);
+  folder.add(solver.options, "blendBand", 0, 0.5, 0.05).name("blend band");
+  folder.add(solver.options, "holdSeconds", 0, 2, 0.1).name("hold (s)");
+  folder.add(solver.options, "decaySeconds", 0.1, 4, 0.1).name("decay (s)");
 
   folder
     .add(view, "compareOffset", 0, 1.2, 0.05)
@@ -245,6 +253,27 @@ function wireFilterControls(panel: DebugPanel, filter: LandmarkFilter): void {
   folder.add(filter.xy, "beta", 0, 0.5, 0.01).name("xy: beta");
   folder.add(filter.z, "minCutoff", 0.1, 5, 0.1).name("z: minCutoff");
   folder.add(filter.z, "beta", 0, 0.5, 0.01).name("z: beta");
+}
+
+/**
+ * Per-bone tracking weight, 1 fully driven and 0 fully released to the
+ * fallback. Makes an asymmetry between limbs a number you can read rather
+ * than a behaviour you have to interpret.
+ */
+function wireTrackingReadouts(panel: DebugPanel, solver: PoseSolver): void {
+  const bones: HumanBoneName[] = [
+    "head",
+    "leftUpperArm",
+    "leftLowerArm",
+    "leftHand",
+    "rightUpperArm",
+    "rightLowerArm",
+    "rightHand",
+  ];
+  const indices = bones.map((b) => BONE_INDEX[b]);
+  panel.addReadoutGroup("Tracking", bones, () =>
+    indices.map((i) => solver.weights[i] ?? 0),
+  );
 }
 
 function wireMotionControls(panel: DebugPanel, interpolator: PoseInterpolator): void {

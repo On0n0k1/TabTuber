@@ -235,12 +235,109 @@ check("mirrored: the bend moves to the right", mirroredRight > 10 && mirroredLef
 check("mirrored: the bend keeps its magnitude", Math.abs(mirroredRight - unmirroredLeft) < 0.5,
   `${unmirroredLeft.toFixed(2)} vs ${mirroredRight.toFixed(2)}`);
 
-// --- 6. Low visibility must release a chain to rest -------------------------
+// --- 6. Degradation: per-bone gating, hold, then decay to relaxed ----------
+//
+// The old behaviour was a binary per-chain gate that snapped the whole arm to
+// T-pose. These cover what replaced it (SPEC.md 5.7).
+
+/** Fresh solver per scenario: lastGood and decay ages persist across solves. */
+function freshRun(
+  points: Float32Array,
+  vis: Float32Array,
+  frames: number,
+  startMs = 0,
+): PoseSolver {
+  const s = new PoseSolver();
+  for (let i = 0; i < frames; i++) {
+    s.solve(points, vis, pose, startMs + i * 33.3);
+  }
+  return s;
+}
+
+function armDirection(bone: HumanBoneName): V3 {
+  const out = v3();
+  rotateV3(out, boneQuat(pose.rotations, bone), [1, 0, 0]);
+  return out;
+}
+
+// Losing the hand must not disturb the upper arm.
+{
+  const vis = new Float32Array(LANDMARK_COUNT).fill(1);
+  vis[LM.LEFT_WRIST] = 0.05;
+  vis[LM.LEFT_INDEX] = 0.05;
+  vis[LM.LEFT_PINKY] = 0.05;
+  const s = freshRun(bent, vis, 120);
+  check("per-bone: lost hand leaves the upper arm fully driven",
+    (s.weights[BONE_INDEX["leftUpperArm"]] ?? 0) > 0.99,
+    `weight=${(s.weights[BONE_INDEX["leftUpperArm"]] ?? 0).toFixed(3)}`);
+  check("per-bone: the hand itself is released",
+    (s.weights[BONE_INDEX["leftHand"]] ?? 1) < 0.01,
+    `weight=${(s.weights[BONE_INDEX["leftHand"]] ?? 1).toFixed(3)}`);
+  check("per-bone: the other arm is untouched",
+    (s.weights[BONE_INDEX["rightHand"]] ?? 0) > 0.99);
+}
+
+// Immediately after losing an arm it must hold its last pose, not snap away.
+{
+  const full = new Float32Array(LANDMARK_COUNT).fill(1);
+  const s = new PoseSolver();
+  for (let i = 0; i < 30; i++) s.solve(bent, full, pose, i * 33.3);
+  const heldTarget = armDirection("leftLowerArm");
+
+  const lost = new Float32Array(LANDMARK_COUNT).fill(1);
+  lost[LM.LEFT_ELBOW] = 0.05;
+  lost[LM.LEFT_WRIST] = 0.05;
+  s.solve(bent, lost, pose, 30 * 33.3);
+  const justAfter = armDirection("leftLowerArm");
+
+  const drift = Math.hypot(
+    (justAfter[0] ?? 0) - (heldTarget[0] ?? 0),
+    (justAfter[1] ?? 0) - (heldTarget[1] ?? 0),
+    (justAfter[2] ?? 0) - (heldTarget[2] ?? 0),
+  );
+  check("hold: one frame after loss the arm has barely moved", drift < 0.02,
+    `drift=${drift.toFixed(4)}`);
+}
+
+// After hold plus decay it must reach the relaxed pose -- arms DOWN, not out.
+{
+  const lost = new Float32Array(LANDMARK_COUNT).fill(1);
+  for (const i of [LM.LEFT_SHOULDER, LM.LEFT_ELBOW, LM.LEFT_WRIST, LM.LEFT_INDEX, LM.LEFT_PINKY]) {
+    lost[i] = 0.05;
+  }
+  freshRun(bent, lost, 150); // ~5s, well past hold + decay
+  const dir = armDirection("leftUpperArm");
+  check("decay: untracked upper arm ends up pointing down",
+    (dir[1] ?? 0) < -0.9, `dir=[${dir.map((n) => n.toFixed(2)).join(",")}]`);
+  check("decay: it is NOT the T-pose it used to snap to",
+    Math.abs(dir[0] ?? 0) < 0.5, `x=${(dir[0] ?? 0).toFixed(2)}`);
+}
+
+// Crossing the threshold must be continuous, which is what stops one arm
+// behaving visibly differently from the other over a small confidence gap.
+{
+  const below = new Float32Array(LANDMARK_COUNT).fill(1);
+  below[LM.LEFT_ELBOW] = 0.48;
+  below[LM.LEFT_WRIST] = 0.48;
+  const a = freshRun(bent, below, 2);
+
+  const above = new Float32Array(LANDMARK_COUNT).fill(1);
+  above[LM.LEFT_ELBOW] = 0.52;
+  above[LM.LEFT_WRIST] = 0.52;
+  const b = freshRun(bent, above, 2);
+
+  const wa = a.weights[BONE_INDEX["leftLowerArm"]] ?? 0;
+  const wb = b.weights[BONE_INDEX["leftLowerArm"]] ?? 0;
+  check("blend: weight is continuous across the threshold", Math.abs(wb - wa) < 0.2,
+    `${wa.toFixed(3)} -> ${wb.toFixed(3)}`);
+  check("blend: partial confidence gives partial weight", wa > 0 && wa < 1,
+    `weight=${wa.toFixed(3)}`);
+}
+
 const partial = new Float32Array(LANDMARK_COUNT).fill(1);
 partial[LM.LEFT_ELBOW] = 0.1;
 partial[LM.LEFT_WRIST] = 0.1;
 solver.solve(bent, partial, pose);
-check("gated: occluded left arm returns to rest", isIdentity(boneQuat(pose.rotations, "leftLowerArm")));
 check("gated: confidence drops below 1", pose.confidence < 1);
 
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);

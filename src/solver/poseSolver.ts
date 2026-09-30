@@ -24,6 +24,7 @@ import {
 } from "../types.ts";
 import { midpoint, readPoint } from "./coords.ts";
 import { restDirOf } from "./referenceRig.ts";
+import { RELAXED_POSE } from "./relaxedPose.ts";
 import {
   copyQ,
   cross,
@@ -57,8 +58,18 @@ export interface SolverOptions {
   neckShare: number;
   /** Derive forearm roll from the hand plane (SPEC.md 5.6). */
   twist: boolean;
-  /** Below this mean visibility a chain is released to rest (SPEC.md 5.7). */
+  /** At or above this mean visibility a bone is fully driven (SPEC.md 5.7). */
   visibilityThreshold: number;
+  /**
+   * Width of the smoothstep band below the threshold. A hard cutoff turns a
+   * small confidence difference between limbs into two visibly different
+   * behaviours; a band makes it a gradual difference instead.
+   */
+  blendBand: number;
+  /** Seconds the last confident rotation is held before it starts decaying. */
+  holdSeconds: number;
+  /** Seconds to decay from the held rotation to the relaxed pose. */
+  decaySeconds: number;
 }
 
 export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
@@ -66,6 +77,9 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   neckShare: 0.4,
   twist: true,
   visibilityThreshold: 0.5,
+  blendBand: 0.25,
+  holdSeconds: 0.4,
+  decaySeconds: 1.2,
 };
 
 /**
@@ -102,6 +116,15 @@ const ARM: Record<Side, ArmLandmarks> = {
   },
 };
 
+/** Weight at or above which a rotation is trusted enough to remember. */
+const TRUSTWORTHY = 0.9;
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  if (edge1 <= edge0) return x >= edge1 ? 1 : 0;
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
 /** Signed angle from `a` to `b` measured about unit `axis`. */
 function signedAngleAbout(
   a: Readonly<V3>,
@@ -123,6 +146,18 @@ export class PoseSolver {
   /** World rotation per bone, indexed by BONE_INDEX. Reused across frames. */
   private readonly world: Q4[] = Array.from({ length: BONE_COUNT }, () => quat());
 
+  /**
+   * How much each bone is being driven by tracking this frame, 0 to 1.
+   * Exposed so the panel can show why a limb is behaving as it is, rather
+   * than leaving it to be inferred from the motion.
+   */
+  readonly weights = new Float32Array(BONE_COUNT);
+
+  /** Last rotation trusted enough to fall back on, and its age in seconds. */
+  private readonly lastGood: Q4[] = Array.from({ length: BONE_COUNT }, () => quat());
+  private readonly sinceGood = new Float32Array(BONE_COUNT).fill(Number.MAX_SAFE_INTEGER);
+  private lastTimestampMs = -1;
+
   // Scratch. The solver allocates nothing per frame.
   private readonly hipMid = v3();
   private readonly shoulderMid = v3();
@@ -142,10 +177,14 @@ export class PoseSolver {
   private readonly qa = quat();
   private readonly qb = quat();
   private readonly qTwist = quat();
-  // Private to setWorld. Sharing scratch with callers let an argument be
-  // destroyed before it was read; see the local-rotation note there.
+  // Private to setBone. Sharing scratch with callers let an argument be
+  // destroyed before it was read; see the note there.
   private readonly qInv = quat();
-  private readonly qLocal = quat();
+  // Private to setBone, for the same reason qInv and qLocal are.
+  private readonly qSolved = quat();
+  private readonly qFallback = quat();
+  private readonly qFinal = quat();
+  private readonly qWorld = quat();
   // Private to computeTwist, which reads landmarks after its caller has
   // already stored the wrist it still needs.
   private readonly ta = v3();
@@ -164,14 +203,24 @@ export class PoseSolver {
    * `points` is LANDMARK_COUNT * 3 in three.js space, already converted by
    * mpToThree. The solver never flips an axis itself.
    */
-  solve(points: Float32Array, visibility: Float32Array, pose: AvatarPose): void {
+  solve(
+    points: Float32Array,
+    visibility: Float32Array,
+    pose: AvatarPose,
+    timestampMs = 0,
+  ): void {
     pose.confidence = meanVisibility(visibility, SOLVER_LANDMARKS);
 
+    const elapsed = (timestampMs - this.lastTimestampMs) / 1000;
+    // Guards the first frame and any timestamp that fails to advance.
+    const dt = elapsed > 0 && elapsed < 1 ? elapsed : 1 / 30;
+    this.lastTimestampMs = timestampMs;
+
     this.resetAll(pose);
-    this.solveTorso(points, pose);
-    this.solveHead(points, visibility, pose);
-    this.solveArm(points, visibility, pose, "left");
-    this.solveArm(points, visibility, pose, "right");
+    this.solveTorso(points, pose, dt);
+    this.solveHead(points, visibility, pose, dt);
+    this.solveArm(points, visibility, pose, "left", dt);
+    this.solveArm(points, visibility, pose, "right", dt);
     // Legs and eyes stay at rest: legs are not driven in the seated profile
     // (SPEC.md 5.7) and eyes are procedural (SPEC.md section 8).
   }
@@ -180,6 +229,7 @@ export class PoseSolver {
   private resetAll(pose: AvatarPose): void {
     for (let i = 0; i < BONE_COUNT; i++) {
       identity(this.world[i] as Q4);
+      this.weights[i] = 0;
       const o = i * 4;
       pose.rotations[o] = 0;
       pose.rotations[o + 1] = 0;
@@ -188,24 +238,67 @@ export class PoseSolver {
     }
   }
 
-  private setWorld(pose: AvatarPose, bone: HumanBoneName, world: Readonly<Q4>, parentWorld: Readonly<Q4>): void {
+  /**
+   * Writes a bone, blending the solved rotation against a fallback according
+   * to confidence (SPEC.md 5.7).
+   *
+   * Blending happens in LOCAL space. The fallback -- last-good decaying to the
+   * relaxed pose -- is a local rotation, and holding it locally means a limb
+   * does not inherit its parent's drift while it is untracked.
+   *
+   * `confidence` of 1 means "always trust", used for bones that are not gated.
+   */
+  private setBone(
+    pose: AvatarPose,
+    bone: HumanBoneName,
+    world: Readonly<Q4>,
+    parentWorld: Readonly<Q4>,
+    confidence: number,
+    dt: number,
+  ): void {
     const idx = BONE_INDEX[bone];
-    copyQ(this.world[idx] as Q4, world);
+    const opts = this.options;
 
-    // local = parentWorld^-1 * world.
-    //
-    // qInv and qLocal are used nowhere else on purpose. Callers routinely
-    // pass one of the shared scratch quaternions as `world`, and inverting
-    // the parent into that same buffer would destroy the argument before it
-    // is read.
+    // qInv and the q* scratch below are used nowhere else on purpose. Callers
+    // routinely pass one of the shared scratch quaternions as `world`, and
+    // writing into that same buffer would destroy the argument before use.
     invert(this.qInv, parentWorld);
-    multiply(this.qLocal, this.qInv, world);
+    multiply(this.qSolved, this.qInv, world);
+
+    const weight = smoothstep(
+      opts.visibilityThreshold - opts.blendBand,
+      opts.visibilityThreshold,
+      confidence,
+    );
+    this.weights[idx] = weight;
+
+    if (weight >= TRUSTWORTHY) {
+      copyQ(this.lastGood[idx] as Q4, this.qSolved);
+      this.sinceGood[idx] = 0;
+      copyQ(this.qFinal, this.qSolved);
+    } else {
+      const age = (this.sinceGood[idx] ?? 0) + dt;
+      this.sinceGood[idx] = age;
+
+      // Hold, then decay. Without the timeout a permanently occluded limb
+      // would freeze forever in whatever position it was last seen.
+      const decay =
+        opts.decaySeconds <= 0
+          ? 1
+          : Math.min(1, Math.max(0, (age - opts.holdSeconds) / opts.decaySeconds));
+
+      slerp(this.qFallback, this.lastGood[idx] as Q4, RELAXED_POSE[idx] as Q4, decay);
+      slerp(this.qFinal, this.qFallback, this.qSolved, weight);
+    }
+
+    multiply(this.qWorld, parentWorld, this.qFinal);
+    copyQ(this.world[idx] as Q4, this.qWorld);
 
     const o = idx * 4;
-    pose.rotations[o] = this.qLocal[0];
-    pose.rotations[o + 1] = this.qLocal[1];
-    pose.rotations[o + 2] = this.qLocal[2];
-    pose.rotations[o + 3] = this.qLocal[3];
+    pose.rotations[o] = this.qFinal[0];
+    pose.rotations[o + 1] = this.qFinal[1];
+    pose.rotations[o + 2] = this.qFinal[2];
+    pose.rotations[o + 3] = this.qFinal[3];
   }
 
   private worldOf(bone: HumanBoneName): Readonly<Q4> {
@@ -219,7 +312,7 @@ export class PoseSolver {
    * Hips stay at identity: the waist is anchored and everything rotates
    * relative to it (SPEC.md 5.5).
    */
-  private solveTorso(points: Float32Array, pose: AvatarPose): void {
+  private solveTorso(points: Float32Array, pose: AvatarPose, dt: number): void {
     midpoint(this.hipMid, points, LM.LEFT_HIP, LM.RIGHT_HIP);
     midpoint(this.shoulderMid, points, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER);
 
@@ -246,7 +339,9 @@ export class PoseSolver {
     for (let i = 0; i < chain.length; i++) {
       const bone = chain[i] as HumanBoneName;
       slerp(this.qTwist, this.ident, this.torso, cumulative[i] as number);
-      this.setWorld(pose, bone, this.qTwist, parent);
+      // Ungated: hips and spine are derived from shoulder and hip landmarks,
+      // which are the last things to leave frame for a seated subject.
+      this.setBone(pose, bone, this.qTwist, parent, 1, dt);
       parent = this.worldOf(bone);
     }
   }
@@ -255,13 +350,14 @@ export class PoseSolver {
    * Full head orientation from nose and both ears -- three points give yaw,
    * pitch and roll, so no face tracking is needed for this (SPEC.md 5.6).
    */
-  private solveHead(points: Float32Array, visibility: Float32Array, pose: AvatarPose): void {
+  private solveHead(
+    points: Float32Array,
+    visibility: Float32Array,
+    pose: AvatarPose,
+    dt: number,
+  ): void {
     const upperChest = this.worldOf("upperChest");
-    if (meanVisibility(visibility, [LM.NOSE, LM.LEFT_EAR, LM.RIGHT_EAR]) < this.options.visibilityThreshold) {
-      this.setWorld(pose, "neck", upperChest, upperChest);
-      this.setWorld(pose, "head", upperChest, this.worldOf("neck"));
-      return;
-    }
+    const confidence = meanVisibility(visibility, [LM.NOSE, LM.LEFT_EAR, LM.RIGHT_EAR]);
 
     midpoint(this.earMid, points, LM.LEFT_EAR, LM.RIGHT_EAR);
     readPoint(this.pa, points, LM.NOSE);
@@ -280,8 +376,8 @@ export class PoseSolver {
     // The neck takes a share so the head does not appear to pivot on a ball
     // joint at the shoulders.
     slerp(this.qTwist, upperChest, this.headWorld, this.options.neckShare);
-    this.setWorld(pose, "neck", this.qTwist, upperChest);
-    this.setWorld(pose, "head", this.headWorld, this.worldOf("neck"));
+    this.setBone(pose, "neck", this.qTwist, upperChest, confidence, dt);
+    this.setBone(pose, "head", this.headWorld, this.worldOf("neck"), confidence, dt);
   }
 
   /**
@@ -289,7 +385,13 @@ export class PoseSolver {
    * shoulder elevation but adds noise, and whether it earns that is still
    * open (SPEC.md 13).
    */
-  private solveArm(points: Float32Array, visibility: Float32Array, pose: AvatarPose, side: Side): void {
+  private solveArm(
+    points: Float32Array,
+    visibility: Float32Array,
+    pose: AvatarPose,
+    side: Side,
+    dt: number,
+  ): void {
     const lm = ARM[side];
     const upperChest = this.worldOf("upperChest");
     const shoulderBone = `${side}Shoulder` as HumanBoneName;
@@ -297,12 +399,14 @@ export class PoseSolver {
     const lowerBone = `${side}LowerArm` as HumanBoneName;
     const handBone = `${side}Hand` as HumanBoneName;
 
-    this.setWorld(pose, shoulderBone, upperChest, upperChest);
+    this.setBone(pose, shoulderBone, upperChest, upperChest, 1, dt);
     const shoulderWorld = this.worldOf(shoulderBone);
 
-    if (meanVisibility(visibility, [lm.shoulder, lm.elbow, lm.wrist]) < this.options.visibilityThreshold) {
-      return;
-    }
+    // Gated per bone, not per chain. One number for the whole arm meant a
+    // hand leaving frame also killed the shoulder, discarding good data.
+    const upperConfidence = meanVisibility(visibility, [lm.shoulder, lm.elbow]);
+    const lowerConfidence = meanVisibility(visibility, [lm.elbow, lm.wrist]);
+    const handConfidence = meanVisibility(visibility, [lm.wrist, lm.index, lm.pinky]);
 
     // Upper arm: shoulder -> elbow. Swing only; roll about the bone's own
     // axis is not recoverable from two points (SPEC.md 5.6).
@@ -310,7 +414,7 @@ export class PoseSolver {
     readPoint(this.pb, points, lm.elbow);
     normalize(this.axisX, sub(this.axisX, this.pb, this.pa));
     fromUnitVectors(this.qa, restDirOf(upperBone), this.axisX);
-    this.setWorld(pose, upperBone, this.qa, shoulderWorld);
+    this.setBone(pose, upperBone, this.qa, shoulderWorld, upperConfidence, dt);
 
     // Lower arm: elbow -> wrist.
     readPoint(this.pc, points, lm.wrist);
@@ -319,7 +423,7 @@ export class PoseSolver {
 
     const twisted = this.computeTwist(points, visibility, lm, side, this.qb, this.axisY);
     if (twisted) multiply(this.qb, this.qTwist, this.qb);
-    this.setWorld(pose, lowerBone, this.qb, this.worldOf(upperBone));
+    this.setBone(pose, lowerBone, this.qb, this.worldOf(upperBone), lowerConfidence, dt);
 
     // Hand: wrist -> midpoint of index and pinky.
     midpoint(this.handMid, points, lm.index, lm.pinky);
@@ -328,7 +432,7 @@ export class PoseSolver {
     // Carry the forearm twist through, otherwise the hand counter-rotates by
     // exactly the twist that was just applied to its parent.
     if (twisted) multiply(this.qa, this.qTwist, this.qa);
-    this.setWorld(pose, handBone, this.qa, this.worldOf(lowerBone));
+    this.setBone(pose, handBone, this.qa, this.worldOf(lowerBone), handConfidence, dt);
   }
 
   /**
@@ -352,6 +456,7 @@ export class PoseSolver {
     if (meanVisibility(visibility, [lm.index, lm.pinky]) < this.options.visibilityThreshold) {
       return false;
     }
+
 
     readPoint(this.ta, points, lm.wrist);
     readPoint(this.tb, points, lm.index);

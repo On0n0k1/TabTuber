@@ -93,7 +93,7 @@ function boot(): void {
     mirrorScalars(visibility, frame.visibility, view.mirror);
     stickFigure.update(points, visibility);
 
-    solver.solve(points, visibility, pose);
+    solver.solve(points, visibility, pose, frame.timestampMs);
     pose.timestampMs = frame.timestampMs;
     interpolator.setTarget(pose);
   });

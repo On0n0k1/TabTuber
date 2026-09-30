@@ -3,9 +3,9 @@
  *
  * Downstream code subscribes once, here, rather than to a backend instance,
  * so switching does not require every consumer to re-register. That is what
- * makes the backend a runtime choice instead of a build-time one -- the point
- * being to compare Holistic's body tracking against PoseLandmarker's directly
- * and keep a rollback (SPEC.md 5.6).
+ * makes the backend a runtime choice instead of a build-time one, so the
+ * non-default backend stays available as a reference and a fallback
+ * (SPEC.md 11).
  */
 
 import type { PoseFrame } from "../types.ts";

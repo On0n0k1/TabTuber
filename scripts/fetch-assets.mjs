@@ -39,19 +39,19 @@ if (!name) {
 }
 
 /**
- * Both backends are kept available at runtime so body tracking can be
- * compared between them and rolled back (SPEC.md 5.6), so both models are
- * staged. Holistic is the larger of the two: it bundles pose, both hands and
- * face in one asset.
+ * Holistic first: it is the default backend (SPEC.md 11), so a cold checkout
+ * has what it needs soonest if the second download fails or is interrupted.
+ * The pose model is still staged, since that backend stays selectable as a
+ * fallback and reference.
  */
 const DOWNLOADS = [
   {
-    file: `${name}.task`,
-    url: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/${name}/float16/latest/${name}.task`,
-  },
-  {
     file: "holistic_landmarker.task",
     url: "https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task",
+  },
+  {
+    file: `${name}.task`,
+    url: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/${name}/float16/latest/${name}.task`,
   },
 ];
 

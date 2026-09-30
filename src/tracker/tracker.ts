@@ -1,12 +1,12 @@
 /*
  * Tracking backend interface and the shared video-driven loop.
  *
- * Two backends exist deliberately (SPEC.md 5.6): PoseLandmarker, which is
- * known-good for the body but supplies only three crude knuckle estimates per
- * hand, and Holistic, which adds real hand landmarks but bundles its own pose
- * model whose quality relative to pose_landmarker_full is unverified. Keeping
- * both switchable at runtime is what makes that comparison evidence rather
- * than guesswork, and leaves a rollback if Holistic's body tracking is worse.
+ * Two backends exist deliberately (SPEC.md 11). Holistic is the default: it
+ * tracks better overall and is the only one supplying real hand landmarks.
+ * PoseLandmarker remains selectable as a fallback and as an independent
+ * reference -- when a pose looks wrong, switching backends separates "the
+ * tracker is struggling" from "this backend is struggling", which a single
+ * implementation cannot tell you.
  *
  * Subclasses are the only place MediaPipe types may appear; everything
  * downstream sees PoseFrame.

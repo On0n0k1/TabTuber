@@ -22,7 +22,14 @@ import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.t
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
+import { readSetting, writeSetting } from "./ui/settings.ts";
 import { StatusBanner } from "./ui/statusBanner.ts";
+
+type BackendName = "holistic" | "pose";
+type TrackerRegistry = Record<BackendName, () => Tracker>;
+
+/** Holistic tracks better overall and is the only source of hand data. */
+const DEFAULT_BACKEND: BackendName = "holistic";
 
 function boot(): void {
   const canvas = document.querySelector<HTMLCanvasElement>("#stage");
@@ -34,10 +41,21 @@ function boot(): void {
 
   const stage = new Stage(canvas);
   const camera = new Camera();
-  const trackers: Record<string, () => Tracker> = {
-    pose: () => new PoseTracker(),
+  // Holistic first: it tracks better overall, and it is the only backend that
+  // supplies real hand landmarks (SPEC.md 11). Pose is kept selectable as a
+  // fallback and as an independent reference when the two disagree.
+  const trackers = {
     holistic: () => new HolisticTracker(),
-  };
+    pose: () => new PoseTracker(),
+  } satisfies Record<string, () => Tracker>;
+
+  const backendNames = Object.keys(trackers) as BackendName[];
+  const initialBackend = readSetting<BackendName>(
+    "backend",
+    backendNames,
+    DEFAULT_BACKEND,
+  );
+
   const host = new TrackerHost();
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
@@ -190,30 +208,32 @@ function boot(): void {
   });
   stage.start();
 
-  wireBackendControl(panel, host, trackers);
-  void startPipeline(camera, host, banner);
+  wireBackendControl(panel, host, trackers, initialBackend);
+  void startPipeline(camera, host, banner, trackers, initialBackend);
 }
 
 /**
  * Lets the tracking backend be swapped while running.
  *
- * Holistic adds real hand landmarks but bundles its own pose model, and
- * whether its body tracking matches pose_landmarker_full is unverified.
- * Switching live is how that gets settled by observation -- watch the Stats
- * folder while flipping -- rather than by argument (SPEC.md 5.6).
+ * Holistic is the default. Pose stays selectable as a fallback and as a
+ * second opinion when a pose looks wrong. The choice persists, since it is a
+ * preference rather than a per-session experiment (SPEC.md 11).
  */
 function wireBackendControl(
   panel: DebugPanel,
   host: TrackerHost,
-  trackers: Record<string, () => Tracker>,
+  trackers: TrackerRegistry,
+  initial: BackendName,
 ): void {
   const folder = panel.folder("Backend");
-  const proxy = { backend: "pose" };
+  const proxy = { backend: initial };
   folder
     .add(proxy, "backend", Object.keys(trackers))
     .onChange((name: string) => {
-      const factory = trackers[name];
-      if (factory) void host.use(name, factory);
+      const factory = trackers[name as BackendName];
+      if (!factory) return;
+      writeSetting("backend", name);
+      void host.use(name, factory);
     });
 }
 
@@ -226,6 +246,8 @@ async function startPipeline(
   camera: Camera,
   host: TrackerHost,
   banner: StatusBanner,
+  trackers: TrackerRegistry,
+  backend: BackendName,
 ): Promise<void> {
   host.onStatus((s) => {
     switch (s.kind) {
@@ -243,7 +265,7 @@ async function startPipeline(
     }
   });
 
-  await host.use("pose", () => new PoseTracker());
+  await host.use(backend, trackers[backend]);
   await camera.start();
 }
 

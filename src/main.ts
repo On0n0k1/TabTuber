@@ -13,7 +13,12 @@ import { DebugRig } from "./render/debugRig.ts";
 import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
-import { handToThree, mirrorScalars, mpToThree } from "./solver/coords.ts";
+import {
+  handToThree,
+  mirrorImagePoints,
+  mirrorScalars,
+  mpToThree,
+} from "./solver/coords.ts";
 import { PoseSolver, type PostureMode } from "./solver/poseSolver.ts";
 import { BONE_INDEX, type HumanBoneName } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
@@ -100,6 +105,9 @@ function boot(): void {
   const filteredWorld = new Float32Array(LANDMARK_COUNT * 3);
   const points = new Float32Array(LANDMARK_COUNT * 3);
   const visibility = new Float32Array(LANDMARK_COUNT);
+  // Image space, mirrored to match. Hip sway needs this because world
+  // landmarks are hip-centred and cannot report that the body moved.
+  const imagePoints = new Float32Array(LANDMARK_COUNT * 3);
 
   // Hand landmarks, when the active backend supplies them.
   const leftHandPoints = new Float32Array(HAND_LANDMARK_COUNT * 3);
@@ -175,7 +183,8 @@ function boot(): void {
       handPoints.right = null;
     }
 
-    solver.solve(points, visibility, pose, frame.timestampMs, handPoints);
+    mirrorImagePoints(imagePoints, frame.image, view.mirror);
+    solver.solve(points, visibility, pose, frame.timestampMs, handPoints, imagePoints);
     pose.timestampMs = frame.timestampMs;
     interpolator.setTarget(pose);
   });
@@ -436,6 +445,12 @@ function wireSolverControls(
   folder.add(solver.options, "blendBand", 0, 0.5, 0.05).name("blend band");
   folder.add(solver.options, "holdSeconds", 0, 2, 0.1).name("hold (s)");
   folder.add(solver.options, "decaySeconds", 0.1, 4, 0.1).name("decay (s)");
+
+  // Hip sway (SPEC.md 5.5). Lateral only; depth is never swayed.
+  folder.add(solver.options.sway, "enabled").name("hip sway");
+  folder.add(solver.options.sway, "gain", 0, 1.5, 0.05).name("sway gain");
+  folder.add(solver.options.sway, "max", 0, 0.3, 0.01).name("sway max (m)");
+  folder.add(solver.options.sway, "baselineSeconds", 1, 40, 1).name("sway recentre (s)");
 
   folder
     .add(view, "compareOffset", 0, 1.2, 0.05)

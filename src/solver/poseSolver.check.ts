@@ -551,5 +551,69 @@ check("gated: confidence drops below 1", pose.confidence < 1);
     c.every((v, i) => Math.abs(v - (d[i] ?? 0)) < 1e-9) && isIdentity(d));
 }
 
+// --- 8. Hip sway (SPEC.md 5.5) ---------------------------------------------
+//
+// Derived from IMAGE space: world landmarks are hip-centred, so the hips sit
+// at zero by construction and cannot report that the body moved.
+{
+  const full = new Float32Array(LANDMARK_COUNT).fill(1);
+
+  /** Image-space landmarks with the hips at a given horizontal position. */
+  const imageAt = (x: number): Float32Array => {
+    const img = new Float32Array(LANDMARK_COUNT * 3).fill(0.5);
+    img[LM.LEFT_HIP * 3] = x;
+    img[LM.RIGHT_HIP * 3] = x;
+    return img;
+  };
+
+  const settle = (solver: PoseSolver, img: Float32Array, frames: number, from = 0): void => {
+    for (let i = 0; i < frames; i++) {
+      solver.solve(rest, full, pose, (from + i) * 33.3, null, img);
+    }
+  };
+
+  // Starting off-centre must NOT lean the avatar: the baseline seeds to
+  // wherever the subject is, so sway means "moved", not "is not centred".
+  const s1 = makeSolver();
+  settle(s1, imageAt(0.3), 30);
+  check("sway: an off-centre subject is not leaned", Math.abs(pose.rootOffset[0] ?? 1) < 0.005,
+    `${(pose.rootOffset[0] ?? 0).toFixed(4)}m`);
+
+  // Moving away from the established neutral does sway, in the right direction.
+  settle(s1, imageAt(0.45), 30, 30);
+  const right = pose.rootOffset[0] ?? 0;
+  check("sway: moving right in frame sways to +X", right > 0.01, `${right.toFixed(4)}m`);
+
+  const s2 = makeSolver();
+  settle(s2, imageAt(0.5), 30);
+  settle(s2, imageAt(0.35), 30, 30);
+  const left = pose.rootOffset[0] ?? 0;
+  check("sway: moving left in frame sways to -X", left < -0.01, `${left.toFixed(4)}m`);
+
+  // Clamped, so a big move cannot fling the avatar across the stage.
+  const s3 = makeSolver();
+  settle(s3, imageAt(0.5), 30);
+  settle(s3, imageAt(1.0), 40, 30);
+  const clamped = Math.abs(pose.rootOffset[0] ?? 0);
+  check("sway: large movement stays clamped",
+    clamped <= (s3.options.sway.max ?? 0) + 1e-6, `${clamped.toFixed(4)}m`);
+
+  // Depth and height are never swayed; depth is the unreliable axis.
+  check("sway: vertical and depth stay zero",
+    (pose.rootOffset[1] ?? 1) === 0 && (pose.rootOffset[2] ?? 1) === 0);
+
+  // Holding a new position must re-centre, so a shifted chair does not lean
+  // the avatar forever.
+  settle(s3, imageAt(1.0), 2000, 70);
+  check("sway: a held position re-centres over time",
+    Math.abs(pose.rootOffset[0] ?? 1) < 0.02, `${(pose.rootOffset[0] ?? 0).toFixed(4)}m`);
+
+  // No image data at all must leave the avatar anchored, not drifting.
+  const s4 = makeSolver();
+  s4.solve(rest, full, pose, 0, null, null);
+  check("sway: absent image data leaves the root anchored",
+    (pose.rootOffset[0] ?? 1) === 0);
+}
+
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);
 console.log("\nALL PASS");

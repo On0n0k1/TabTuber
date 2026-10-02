@@ -96,6 +96,31 @@ export function handToThree(
 }
 
 /**
+ * Mirrors normalised image-space landmarks.
+ *
+ * Image space is [0, 1], so reflecting is `1 - x`, not a negation. The same
+ * left/right index swap applies as for world landmarks, for the same reason:
+ * a reflection alone is not a rotation (see the note at the top of this file).
+ */
+export function mirrorImagePoints(
+  out: Float32Array,
+  image: Float32Array,
+  mirror: boolean,
+): void {
+  if (!mirror) {
+    out.set(image);
+    return;
+  }
+  for (let i = 0; i < LANDMARK_COUNT; i++) {
+    const src = i * 3;
+    const dst = (MIRROR_INDEX[i] ?? i) * 3;
+    out[dst] = 1 - (image[src] ?? 0);
+    out[dst + 1] = image[src + 1] ?? 0;
+    out[dst + 2] = image[src + 2] ?? 0;
+  }
+}
+
+/**
  * Applies the same left/right swap to a per-landmark scalar array.
  *
  * Visibility must travel with its landmark. Without this, the solver would

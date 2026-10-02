@@ -93,6 +93,26 @@ export interface SolverOptions {
   holdSeconds: number;
   /** Seconds to decay from the held rotation to the relaxed pose. */
   decaySeconds: number;
+  /** Clamped lateral hip sway, derived from image space (SPEC.md 5.5). */
+  sway: SwayOptions;
+}
+
+export interface SwayOptions {
+  enabled: boolean;
+  /** Metres of sway per unit of normalised image displacement. */
+  gain: number;
+  /** Hard limit in metres. Depth is never swayed; only lateral. */
+  max: number;
+  /** Seconds of smoothing on the measured hip position. */
+  responseSeconds: number;
+  /**
+   * Seconds over which the neutral centre adapts.
+   *
+   * Without this, sitting off-centre in frame would lean the avatar
+   * permanently. A slowly-adapting baseline self-calibrates, and makes sway
+   * mean "moved recently" rather than "is not centred".
+   */
+  baselineSeconds: number;
 }
 
 export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
@@ -105,6 +125,13 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   blendBand: 0.25,
   holdSeconds: 0.4,
   decaySeconds: 1.2,
+  sway: {
+    enabled: true,
+    gain: 0.4,
+    max: 0.09,
+    responseSeconds: 0.25,
+    baselineSeconds: 12,
+  },
 };
 
 /**
@@ -231,6 +258,10 @@ export class PoseSolver {
   private readonly idleDelta = new Float32Array(BONE_COUNT * 4);
   private idleElapsed = 0;
 
+  /** Smoothed hip position and its slowly-adapting neutral, image space. */
+  private hipX = Number.NaN;
+  private hipBaseline = Number.NaN;
+
   // Scratch. The solver allocates nothing per frame.
   private readonly hipMid = v3();
   private readonly shoulderMid = v3();
@@ -287,6 +318,7 @@ export class PoseSolver {
     pose: AvatarPose,
     timestampMs = 0,
     hands: HandPoints | null = null,
+    imagePoints: Float32Array | null = null,
   ): void {
     // Legs count toward confidence only when something is driving them.
     pose.confidence =
@@ -312,6 +344,8 @@ export class PoseSolver {
       this.solveLeg(points, visibility, pose, "left", dt);
       this.solveLeg(points, visibility, pose, "right", dt);
     }
+
+    this.solveSway(imagePoints, pose, dt);
     // In sitting posture the legs stay at rest, which is a standing pose for
     // them, so the character reads as standing regardless of what the
     // subject's lower body is doing (SPEC.md 5.8). Eyes are procedural (§8).
@@ -551,6 +585,41 @@ export class PoseSolver {
   }
 
   /**
+   * Lateral hip sway (SPEC.md 5.5).
+   *
+   * Derived from IMAGE space, not world. World landmarks have their origin at
+   * the hip midpoint, so the hips sit at zero by construction and cannot
+   * report that the body moved at all. Depth is never used: it is the
+   * unreliable axis, and the failure mode of swaying on it is the avatar
+   * lurching toward and away from the viewer.
+   */
+  private solveSway(imagePoints: Float32Array | null, pose: AvatarPose, dt: number): void {
+    const sway = this.options.sway;
+    pose.rootOffset[1] = 0;
+    pose.rootOffset[2] = 0;
+
+    if (!sway.enabled || !imagePoints) {
+      pose.rootOffset[0] = 0;
+      return;
+    }
+
+    const measured =
+      (((imagePoints[LM.LEFT_HIP * 3] ?? 0.5) + (imagePoints[LM.RIGHT_HIP * 3] ?? 0.5)) / 2);
+
+    // First frame seeds both, so the avatar does not lurch from a zero start.
+    if (!Number.isFinite(this.hipX)) {
+      this.hipX = measured;
+      this.hipBaseline = measured;
+    }
+
+    this.hipX += (measured - this.hipX) * approach(dt, sway.responseSeconds);
+    this.hipBaseline += (this.hipX - this.hipBaseline) * approach(dt, sway.baselineSeconds);
+
+    const offset = (this.hipX - this.hipBaseline) * sway.gain;
+    pose.rootOffset[0] = Math.max(-sway.max, Math.min(sway.max, offset));
+  }
+
+  /**
    * Leg chain, standing posture only.
    *
    * Straightforward compared with the arms: no twist is recoverable from
@@ -713,6 +782,11 @@ export class PoseSolver {
     setAxisAngle(this.qTwist, boneAxis, angle);
     return true;
   }
+}
+
+/** Frame-rate independent approach factor for a given time constant. */
+function approach(dt: number, tau: number): number {
+  return tau <= 0 ? 1 : Math.min(1, 1 - Math.exp(-dt / tau));
 }
 
 function vectorLength(a: Readonly<V3>): number {

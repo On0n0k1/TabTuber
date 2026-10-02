@@ -17,6 +17,11 @@ import { HIP_HEIGHT_M, mirrorScalars, mpToThree } from "./coords.ts";
 import { BONE_INDEX, LANDMARK_COUNT, createAvatarPose, type HumanBoneName } from "../types.ts";
 import { PoseSolver } from "./poseSolver.ts";
 import { HAND } from "../tracker/handLandmarks.ts";
+import {
+  DEFAULT_HAND_XY_PARAMS,
+  DEFAULT_HAND_Z_PARAMS,
+  LandmarkFilter,
+} from "../filter/oneEuro.ts";
 import { HAND_LANDMARK_COUNT } from "../types.ts";
 import { rotateV3, setAxisAngle, quat, v3, type Q4, type V3 } from "./math.ts";
 
@@ -700,6 +705,97 @@ check("gated: confidence drops below 1", pose.confidence < 1);
   }
   check("sensitivity: hand bend has no unstable orientation", worstBend < LIMIT,
     `worst ${worstBend.toFixed(2)}deg at bend ${worstBendAt}deg`);
+}
+
+// --- 10. Shake under realistic noise (SPEC.md 5.6) -------------------------
+//
+// Section 9 measures single-frame sensitivity, which finds singularities.
+// Shaking is a time-series property, so this measures RMS frame-to-frame
+// change over a run with independent per-frame noise, which is what the eye
+// actually perceives.
+//
+// Noise here is depth-dominant, because that is what monocular tracking
+// produces. With uniform noise a palm angled edge-on to the camera looks
+// fine; with realistic noise its orientation is determined almost entirely
+// by the least reliable axis.
+//
+// This exercises the solver together with the hand filter, since neither is
+// sufficient alone -- the solver cannot smooth and the filter cannot know
+// what the geometry is sensitive to. It therefore duplicates wiring that
+// main.ts owns, and would not catch the filter being removed there.
+{
+  const full = new Float32Array(LANDMARK_COUNT).fill(1);
+
+  const palmDownHand = (pitchDegrees: number): Float32Array => {
+    const h = new Float32Array(HAND_LANDMARK_COUNT * 3);
+    const set = (i: number, x: number, y: number, z: number): void => {
+      h[i * 3] = x; h[i * 3 + 1] = y; h[i * 3 + 2] = z;
+    };
+    set(HAND.WRIST, 0.65, 1.4, 0);
+    set(HAND.MIDDLE_MCP, 0.73, 1.4, 0);
+    set(HAND.INDEX_MCP, 0.73, 1.4, 0.02);
+    set(HAND.PINKY_MCP, 0.73, 1.4, -0.02);
+
+    const q = quat();
+    setAxisAngle(q, [0, 0, 1], (pitchDegrees * Math.PI) / 180);
+    const out = new Float32Array(h.length);
+    const t = v3();
+    for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+      rotateV3(t, q, [(h[i * 3] ?? 0) - 0.65, (h[i * 3 + 1] ?? 0) - 1.4, h[i * 3 + 2] ?? 0]);
+      out[i * 3] = t[0] + 0.65;
+      out[i * 3 + 1] = t[1] + 1.4;
+      out[i * 3 + 2] = t[2];
+    }
+    return out;
+  };
+
+  /** Depth noise is roughly five times the lateral noise in practice. */
+  const noisy = (a: Float32Array, seed: number): Float32Array => {
+    const out = a.slice();
+    for (let i = 0; i < out.length; i++) {
+      const amp = i % 3 === 2 ? 0.0025 : 0.0005;
+      out[i] = (out[i] ?? 0) + Math.sin(i * 12.9898 + seed * 7.13) * amp;
+    }
+    return out;
+  };
+
+  const angleBetweenQ = (a: Q4, b: Q4): number => {
+    const d = Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]));
+    return (2 * Math.acos(d) * 180) / Math.PI;
+  };
+
+  const shake = (pitch: number, bone: HumanBoneName): number => {
+    const s = makeSolver();
+    const f = new LandmarkFilter(HAND_LANDMARK_COUNT);
+    f.xy = { ...DEFAULT_HAND_XY_PARAMS };
+    f.z = { ...DEFAULT_HAND_Z_PARAMS };
+    const filtered = new Float32Array(HAND_LANDMARK_COUNT * 3);
+    const hand = palmDownHand(pitch);
+
+    let prev: Q4 | null = null;
+    let acc = 0;
+    let n = 0;
+    for (let i = 0; i < 120; i++) {
+      f.apply(filtered, noisy(hand, i), i * 33.3);
+      s.solve(noisy(rest, i + 500), full, pose, i * 33.3, { left: filtered, right: null });
+      const q = boneQuat(pose.rotations, bone);
+      // Skip the filter's warm-up.
+      if (prev && i > 30) { acc += angleBetweenQ(prev, q) ** 2; n++; }
+      prev = q;
+    }
+    return Math.sqrt(acc / Math.max(1, n));
+  };
+
+  let worst = 0;
+  let worstAt = 0;
+  for (const pitch of [0, 30, 60, 90]) {
+    const v = Math.max(shake(pitch, "leftLowerArm"), shake(pitch, "leftHand"));
+    if (v > worst) { worst = v; worstAt = pitch; }
+  }
+  // Unfiltered this reaches about 6 degrees with the palm pitched down, which
+  // is plainly visible shaking.
+  check("shake: palm angled down stays steady under depth noise", worst < 1.5,
+    `worst ${worst.toFixed(2)}deg at pitch ${worstAt}deg`);
 }
 
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);

@@ -6,7 +6,11 @@
  */
 
 import { Camera } from "./capture/camera.ts";
-import { LandmarkFilter } from "./filter/oneEuro.ts";
+import {
+  DEFAULT_HAND_XY_PARAMS,
+  DEFAULT_HAND_Z_PARAMS,
+  LandmarkFilter,
+} from "./filter/oneEuro.ts";
 import { AvatarSlot, enableVrmDrop } from "./render/avatarSlot.ts";
 import { Blink, BLINK_EXPRESSION } from "./render/blink.ts";
 import { DebugRig } from "./render/debugRig.ts";
@@ -109,7 +113,17 @@ function boot(): void {
   // landmarks are hip-centred and cannot report that the body moved.
   const imagePoints = new Float32Array(LANDMARK_COUNT * 3);
 
-  // Hand landmarks, when the active backend supplies them.
+  // Hand landmarks, when the active backend supplies them. Filtered with
+  // their own profile: they are the noisiest input and feed the most
+  // depth-sensitive derivation in the solver.
+  const handFilters = {
+    left: makeHandFilter(),
+    right: makeHandFilter(),
+  };
+  const handFiltered = {
+    left: new Float32Array(HAND_LANDMARK_COUNT * 3),
+    right: new Float32Array(HAND_LANDMARK_COUNT * 3),
+  };
   const leftHandPoints = new Float32Array(HAND_LANDMARK_COUNT * 3);
   const rightHandPoints = new Float32Array(HAND_LANDMARK_COUNT * 3);
   const handPoints: { left: Float32Array | null; right: Float32Array | null } = {
@@ -171,15 +185,21 @@ function boot(): void {
     const sourceRight = view.mirror ? frame.leftHand : frame.rightHand;
 
     if (sourceLeft?.present) {
-      handToThree(leftHandPoints, sourceLeft.world, view.mirror);
+      handFilters.left.apply(handFiltered.left, sourceLeft.world, frame.timestampMs);
+      handToThree(leftHandPoints, handFiltered.left, view.mirror);
       handPoints.left = leftHandPoints;
     } else {
+      // Reset on loss, or re-acquisition blends in a hand position from
+      // before the gap.
+      handFilters.left.reset();
       handPoints.left = null;
     }
     if (sourceRight?.present) {
-      handToThree(rightHandPoints, sourceRight.world, view.mirror);
+      handFilters.right.apply(handFiltered.right, sourceRight.world, frame.timestampMs);
+      handToThree(rightHandPoints, handFiltered.right, view.mirror);
       handPoints.right = rightHandPoints;
     } else {
+      handFilters.right.reset();
       handPoints.right = null;
     }
 
@@ -202,7 +222,7 @@ function boot(): void {
   applyCompareOffset(view.compareOffset, stickFigure, debugRig, avatarSlot);
   wireAvatar(avatarSlot, stage, banner, debugRig);
   wireSolverControls(panel, solver, view, stickFigure, debugRig, avatarSlot);
-  wireFilterControls(panel, filter);
+  wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator);
   wireLivelinessControls(panel, solver, blink);
   wireTrackingReadouts(panel, solver);
@@ -464,13 +484,37 @@ function wireSolverControls(
  * has to be judged against both the raw and smoothed signal, or the noise
  * floor gets mistaken for a solver fault.
  */
-function wireFilterControls(panel: DebugPanel, filter: LandmarkFilter): void {
+function wireFilterControls(
+  panel: DebugPanel,
+  filter: LandmarkFilter,
+  handFilters: { left: LandmarkFilter; right: LandmarkFilter },
+): void {
   const folder = panel.folder("Filter");
   folder.add(filter, "enabled");
   folder.add(filter.xy, "minCutoff", 0.1, 5, 0.1).name("xy: minCutoff");
   folder.add(filter.xy, "beta", 0, 0.5, 0.01).name("xy: beta");
   folder.add(filter.z, "minCutoff", 0.1, 5, 0.1).name("z: minCutoff");
   folder.add(filter.z, "beta", 0, 0.5, 0.01).name("z: beta");
+
+  // Both hands share one set of controls; tuning them apart would only
+  // produce an asymmetry nobody wants.
+  const hands = { minCutoff: DEFAULT_HAND_XY_PARAMS.minCutoff, zMinCutoff: DEFAULT_HAND_Z_PARAMS.minCutoff };
+  const applyHands = (): void => {
+    for (const f of [handFilters.left, handFilters.right]) {
+      f.xy.minCutoff = hands.minCutoff;
+      f.z.minCutoff = hands.zMinCutoff;
+    }
+  };
+  folder.add(hands, "minCutoff", 0.1, 3, 0.05).name("hand xy: minCutoff").onChange(applyHands);
+  folder.add(hands, "zMinCutoff", 0.05, 3, 0.05).name("hand z: minCutoff").onChange(applyHands);
+}
+
+/** Hands get their own profile; see DEFAULT_HAND_XY_PARAMS for why. */
+function makeHandFilter(): LandmarkFilter {
+  const f = new LandmarkFilter(HAND_LANDMARK_COUNT);
+  f.xy = { ...DEFAULT_HAND_XY_PARAMS };
+  f.z = { ...DEFAULT_HAND_Z_PARAMS };
+  return f;
 }
 
 /**

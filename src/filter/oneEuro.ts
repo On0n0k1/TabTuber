@@ -37,6 +37,27 @@ export const DEFAULT_Z_PARAMS: OneEuroParams = {
   dCutoff: 1,
 };
 
+/**
+ * Hand landmarks are filtered harder than body landmarks.
+ *
+ * They are the noisiest input in the pipeline and they drive the most
+ * sensitive derivation: a palm angled edge-on to the camera has its
+ * orientation determined almost entirely by depth, which is the least
+ * reliable axis (SPEC.md 5.6). Hands also move over far shorter distances
+ * than limbs, so the same absolute noise is a much larger fraction.
+ */
+export const DEFAULT_HAND_XY_PARAMS: OneEuroParams = {
+  minCutoff: 0.9,
+  beta: 0.05,
+  dCutoff: 1,
+};
+
+export const DEFAULT_HAND_Z_PARAMS: OneEuroParams = {
+  minCutoff: 0.35,
+  beta: 0.015,
+  dCutoff: 1,
+};
+
 /** Used for the first frame and whenever a timestamp fails to advance. */
 const FALLBACK_DT = 1 / 30;
 

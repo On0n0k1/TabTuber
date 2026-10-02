@@ -8,6 +8,7 @@
 import { Camera } from "./capture/camera.ts";
 import { LandmarkFilter } from "./filter/oneEuro.ts";
 import { AvatarSlot, enableVrmDrop } from "./render/avatarSlot.ts";
+import { Blink, BLINK_EXPRESSION } from "./render/blink.ts";
 import { DebugRig } from "./render/debugRig.ts";
 import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
@@ -83,6 +84,7 @@ function boot(): void {
   // The rig is driven from the interpolator's pose, not the solver's, so it
   // moves at render rate rather than in 30Hz steps.
   const interpolator = new PoseInterpolator();
+  const blink = new Blink();
   const debugRig = new DebugRig();
   stage.scene.add(debugRig.object);
 
@@ -193,6 +195,7 @@ function boot(): void {
   wireSolverControls(panel, solver, view, stickFigure, debugRig, avatarSlot);
   wireFilterControls(panel, filter);
   wireMotionControls(panel, interpolator);
+  wireLivelinessControls(panel, solver, blink);
   wireTrackingReadouts(panel, solver);
   // Height and hip height together say whether a model is correctly scaled
   // and correctly grounded; a hip height of 0 means it will sit in the floor.
@@ -256,6 +259,11 @@ function boot(): void {
   stage.onFrame(({ dt }) => {
     renderFps.tick();
     interpolator.step(dt);
+
+    // Written after step(), which copies expressions from the target: the
+    // blink is generated here at render rate, not carried from the solver.
+    interpolator.current.expressions.set(BLINK_EXPRESSION, blink.update(dt));
+
     debugRig.apply(interpolator.current);
 
     // apply() writes the normalised pose; update() drives spring bones and
@@ -488,6 +496,27 @@ function wireTrackingReadouts(panel: DebugPanel, solver: PoseSolver): void {
   panel.addReadoutGroup("Tracking", bones, () =>
     indices.map((i) => solver.weights[i] ?? 0),
   );
+}
+
+/**
+ * Idle motion and blinking (SPEC.md 8). Both exist so the avatar never goes
+ * completely still: a frozen avatar reads to an audience as broken software,
+ * where a breathing one reads as someone who stepped away.
+ */
+function wireLivelinessControls(
+  panel: DebugPanel,
+  solver: PoseSolver,
+  blink: Blink,
+): void {
+  const folder = panel.folder("Liveliness");
+  folder.add(solver.idle, "amount", 0, 2, 0.05).name("idle amount");
+  folder.add(solver.idle, "breathRate", 0, 1, 0.01).name("breath rate (Hz)");
+  folder.add(solver.idle, "breathDepth", 0, 6, 0.1).name("breath depth (deg)");
+  folder.add(solver.idle, "driftDepth", 0, 8, 0.1).name("drift depth (deg)");
+  folder.add(blink.params, "enabled").name("blink");
+  folder.add(blink.params, "minInterval", 0.5, 8, 0.1).name("blink min (s)");
+  folder.add(blink.params, "maxInterval", 0.5, 12, 0.1).name("blink max (s)");
+  folder.add(blink.params, "duration", 0.05, 0.4, 0.01).name("blink time (s)");
 }
 
 function wireMotionControls(panel: DebugPanel, interpolator: PoseInterpolator): void {

@@ -82,8 +82,20 @@ function isIdentity(q: Readonly<Q4>, eps = 1e-4): boolean {
 }
 
 const visible = new Float32Array(LANDMARK_COUNT).fill(1);
-const solver = new PoseSolver();
 const pose = createAvatarPose();
+
+/**
+ * Idle motion is additive and always on in the app, so it perturbs every
+ * rotation by a fraction of a degree. Checks asserting exact tracking math
+ * use this; the idle section below opts back in deliberately.
+ */
+function makeSolver(): PoseSolver {
+  const s = new PoseSolver();
+  s.idle.amount = 0;
+  return s;
+}
+
+const solver = makeSolver();
 
 // --- 1. Rest pose must solve to identity on every driven bone ---------------
 const rest = restPoseLandmarks();
@@ -259,7 +271,7 @@ function restHand(side: "left" | "right"): Float32Array {
 
 {
   const hands = { left: restHand("left"), right: restHand("right") };
-  const s = new PoseSolver();
+  const s = makeSolver();
   s.solve(rest, visible, pose, 0, hands);
 
   for (const bone of ["leftHand", "rightHand"] as HumanBoneName[]) {
@@ -290,7 +302,7 @@ function restHand(side: "left" | "right"): Float32Array {
     h[i * 3 + 2] = out[2];
   }
 
-  const s = new PoseSolver();
+  const s = makeSolver();
   s.solve(rest, visible, pose, 0, { left: h, right: null });
   const twist = angleOf(boneQuat(pose.rotations, "leftLowerArm"));
   check("palm frame: a 40deg palm roll rolls the forearm",
@@ -299,13 +311,13 @@ function restHand(side: "left" | "right"): Float32Array {
 
 // Missing hands must fall back to the pose-model derivation, not break.
 {
-  const s = new PoseSolver();
+  const s = makeSolver();
   s.solve(rest, visible, pose, 0, { left: null, right: null });
   check("palm frame: absent hands fall back cleanly",
     isIdentity(boneQuat(pose.rotations, "leftHand"), 1e-3),
     JSON.stringify(boneQuat(pose.rotations, "leftHand").map((n) => +n.toFixed(4))));
 
-  const off = new PoseSolver();
+  const off = makeSolver();
   off.options.useHandLandmarks = false;
   off.solve(rest, visible, pose, 0, { left: restHand("left"), right: restHand("right") });
   check("palm frame: can be disabled for comparison",
@@ -336,7 +348,7 @@ function standingLandmarks(): Float32Array {
   const standing = standingLandmarks();
 
   // Sitting must ignore the legs entirely, however confident the landmarks.
-  const sit = new PoseSolver();
+  const sit = makeSolver();
   sit.options.posture = "sitting";
   sit.solve(standing, visible, pose, 0);
   for (const bone of ["leftUpperLeg", "leftLowerLeg", "leftFoot"] as HumanBoneName[]) {
@@ -346,7 +358,7 @@ function standingLandmarks(): Float32Array {
   }
 
   // Standing must drive them.
-  const stand = new PoseSolver();
+  const stand = makeSolver();
   stand.options.posture = "standing";
   stand.solve(standing, visible, pose, 0);
   const shin = angleOf(boneQuat(pose.rotations, "leftLowerLeg"));
@@ -389,7 +401,7 @@ function freshRun(
   frames: number,
   startMs = 0,
 ): PoseSolver {
-  const s = new PoseSolver();
+  const s = makeSolver();
   for (let i = 0; i < frames; i++) {
     s.solve(points, vis, pose, startMs + i * 33.3);
   }
@@ -422,7 +434,7 @@ function armDirection(bone: HumanBoneName): V3 {
 // Immediately after losing an arm it must hold its last pose, not snap away.
 {
   const full = new Float32Array(LANDMARK_COUNT).fill(1);
-  const s = new PoseSolver();
+  const s = makeSolver();
   for (let i = 0; i < 30; i++) s.solve(bent, full, pose, i * 33.3);
   const heldTarget = armDirection("leftLowerArm");
 
@@ -481,6 +493,63 @@ partial[LM.LEFT_ELBOW] = 0.1;
 partial[LM.LEFT_WRIST] = 0.1;
 solver.solve(bent, partial, pose);
 check("gated: confidence drops below 1", pose.confidence < 1);
+
+
+// --- 7. Idle motion (SPEC.md 8) --------------------------------------------
+//
+// Idle is an additive layer, not a fallback: the spine chain is ungated and
+// always tracked, so a fallback-only idle would never breathe. These check it
+// runs regardless of tracking, stays confined to the bones it should touch,
+// and can be switched off completely.
+{
+  const full = new Float32Array(LANDMARK_COUNT).fill(1);
+  const s = new PoseSolver();
+
+  const sampleAfter = (solver: PoseSolver, frames: number, bone: HumanBoneName): Q4 => {
+    for (let i = 0; i < frames; i++) solver.solve(rest, full, pose, i * 33.3);
+    return boneQuat(pose.rotations, bone);
+  };
+
+  // Fully tracked, perfectly still input: any motion is the idle layer.
+  const a = sampleAfter(s, 1, "upperChest");
+  const b = sampleAfter(s, 40, "upperChest");
+  check("idle: the torso breathes even while fully tracked",
+    a.some((v, i) => Math.abs(v - (b[i] ?? 0)) > 1e-4),
+    `${JSON.stringify(a.map((n) => +n.toFixed(5)))} -> ${JSON.stringify(b.map((n) => +n.toFixed(5)))}`);
+
+  // Arms are not given idle motion directly, but their LOCAL rotation still
+  // changes: the solver fixes an arm's world direction from landmarks, so
+  // when the chest breathes underneath it the arm counter-rotates to stay
+  // pointing where it was tracked. That is correct -- the arm holds still in
+  // the world while the torso moves under it -- and the invariant worth
+  // asserting is that the compensation stays bounded by the breath itself
+  // rather than becoming independent motion.
+  const armSolver = new PoseSolver();
+  let armMax = 0;
+  for (let i = 0; i < 400; i++) {
+    armSolver.solve(rest, full, pose, i * 33.3);
+    armMax = Math.max(armMax, angleOf(boneQuat(pose.rotations, "leftUpperArm")));
+  }
+  check("idle: arm compensation stays bounded by breath depth", armMax < 3,
+    `${armMax.toFixed(2)}deg`);
+
+  // Magnitude: breathing must be subtle enough not to read as tracking.
+  const peak = new PoseSolver();
+  let maxAngle = 0;
+  for (let i = 0; i < 400; i++) {
+    peak.solve(rest, full, pose, i * 33.3);
+    maxAngle = Math.max(maxAngle, angleOf(boneQuat(pose.rotations, "upperChest")));
+  }
+  check("idle: breathing stays under 3 degrees", maxAngle < 3, `${maxAngle.toFixed(2)}deg`);
+
+  // amount 0 is a hard off switch.
+  const still = new PoseSolver();
+  still.idle.amount = 0;
+  const c = sampleAfter(still, 1, "upperChest");
+  const d = sampleAfter(still, 80, "upperChest");
+  check("idle: amount 0 disables all motion",
+    c.every((v, i) => Math.abs(v - (d[i] ?? 0)) < 1e-9) && isIdentity(d));
+}
 
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);
 console.log("\nALL PASS");

@@ -25,6 +25,7 @@ import {
 } from "../types.ts";
 import { midpoint, readPoint } from "./coords.ts";
 import { restDirOf } from "./referenceRig.ts";
+import { DEFAULT_IDLE_PARAMS, writeIdleDelta, type IdleParams } from "./idlePose.ts";
 import { RELAXED_POSE } from "./relaxedPose.ts";
 import {
   copyQ,
@@ -204,6 +205,8 @@ function signedAngleAbout(
 
 export class PoseSolver {
   options: SolverOptions;
+  /** Idle motion applied to whatever is not being tracked (SPEC.md 8). */
+  idle: IdleParams = { ...DEFAULT_IDLE_PARAMS };
 
   /** World rotation per bone, indexed by BONE_INDEX. Reused across frames. */
   private readonly world: Q4[] = Array.from({ length: BONE_COUNT }, () => quat());
@@ -219,6 +222,14 @@ export class PoseSolver {
   private readonly lastGood: Q4[] = Array.from({ length: BONE_COUNT }, () => quat());
   private readonly sinceGood = new Float32Array(BONE_COUNT).fill(Number.MAX_SAFE_INTEGER);
   private lastTimestampMs = -1;
+
+  /**
+   * Per-bone idle deltas for this frame, rebuilt once per solve rather than
+   * per bone. Composed onto every bone regardless of tracking, since the
+   * spine is never gated and would otherwise never breathe (SPEC.md 8).
+   */
+  private readonly idleDelta = new Float32Array(BONE_COUNT * 4);
+  private idleElapsed = 0;
 
   // Scratch. The solver allocates nothing per frame.
   private readonly hipMid = v3();
@@ -251,6 +262,7 @@ export class PoseSolver {
   private readonly qFallback = quat();
   private readonly qFinal = quat();
   private readonly qWorld = quat();
+  private readonly qIdle = quat();
   // Private to computeTwist, which reads landmarks after its caller has
   // already stored the wrist it still needs.
   private readonly ta = v3();
@@ -286,6 +298,9 @@ export class PoseSolver {
     // Guards the first frame and any timestamp that fails to advance.
     const dt = elapsed > 0 && elapsed < 1 ? elapsed : 1 / 30;
     this.lastTimestampMs = timestampMs;
+
+    this.idleElapsed += dt;
+    writeIdleDelta(this.idleDelta, this.idleElapsed, this.idle);
 
     this.resetAll(pose);
     this.solveTorso(points, pose, dt);
@@ -367,6 +382,14 @@ export class PoseSolver {
       slerp(this.qFallback, this.lastGood[idx] as Q4, RELAXED_POSE[idx] as Q4, decay);
       slerp(this.qFinal, this.qFallback, this.qSolved, weight);
     }
+
+    // Idle rides on top of whatever was decided above, tracked or not.
+    const io = idx * 4;
+    this.qIdle[0] = this.idleDelta[io] ?? 0;
+    this.qIdle[1] = this.idleDelta[io + 1] ?? 0;
+    this.qIdle[2] = this.idleDelta[io + 2] ?? 0;
+    this.qIdle[3] = this.idleDelta[io + 3] ?? 1;
+    multiply(this.qFinal, this.qFinal, this.qIdle);
 
     multiply(this.qWorld, parentWorld, this.qFinal);
     copyQ(this.world[idx] as Q4, this.qWorld);

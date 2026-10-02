@@ -615,5 +615,92 @@ check("gated: confidence drops below 1", pose.confidence < 1);
     (pose.rootOffset[0] ?? 1) === 0);
 }
 
+// --- 9. Noise sensitivity (SPEC.md 5.6) ------------------------------------
+//
+// A singularity in the solver shows up as a limb shaking at one particular
+// orientation while the input is perfectly still. It cannot be found by
+// checking any single pose, so this sweeps orientations and measures how much
+// output change a millimetre of landmark noise produces at each.
+{
+  const full = new Float32Array(LANDMARK_COUNT).fill(1);
+
+  /** A palm-down hand, rotated about `axis` by `degrees` around the wrist. */
+  const posedHand = (axis: V3, degrees: number): Float32Array => {
+    const h = new Float32Array(HAND_LANDMARK_COUNT * 3);
+    const set = (i: number, x: number, y: number, z: number): void => {
+      h[i * 3] = x; h[i * 3 + 1] = y; h[i * 3 + 2] = z;
+    };
+    set(HAND.WRIST, 0.65, 1.4, 0);
+    set(HAND.MIDDLE_MCP, 0.73, 1.4, 0);
+    set(HAND.INDEX_MCP, 0.73, 1.4, 0.02);
+    set(HAND.PINKY_MCP, 0.73, 1.4, -0.02);
+
+    const q = quat();
+    setAxisAngle(q, axis, (degrees * Math.PI) / 180);
+    const out = new Float32Array(h.length);
+    const t = v3();
+    for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+      rotateV3(t, q, [(h[i * 3] ?? 0) - 0.65, (h[i * 3 + 1] ?? 0) - 1.4, h[i * 3 + 2] ?? 0]);
+      out[i * 3] = t[0] + 0.65;
+      out[i * 3 + 1] = t[1] + 1.4;
+      out[i * 3 + 2] = t[2];
+    }
+    return out;
+  };
+
+  /** Deterministic sub-millimetre perturbation. */
+  const jitter = (a: Float32Array, seed: number): Float32Array => {
+    const out = a.slice();
+    for (let i = 0; i < out.length; i++) {
+      out[i] = (out[i] ?? 0) + Math.sin(i * 12.9898 + seed) * 0.0005;
+    }
+    return out;
+  };
+
+  const angleBetween = (a: Q4, b: Q4): number => {
+    const d = Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]));
+    return (2 * Math.acos(d) * 180) / Math.PI;
+  };
+
+  /** Degrees of output change caused by one millimetre of input noise. */
+  const sensitivity = (axis: V3, degrees: number, bone: HumanBoneName): number => {
+    const h = posedHand(axis, degrees);
+    const s = makeSolver();
+    s.solve(rest, full, pose, 0, { left: jitter(h, 1), right: null });
+    const a = boneQuat(pose.rotations, bone);
+    s.solve(rest, full, pose, 33.3, { left: jitter(h, 2), right: null });
+    return angleBetween(a, boneQuat(pose.rotations, bone));
+  };
+
+  /** Comfortably above the ~0.5 baseline, far below a real singularity. */
+  const LIMIT = 3;
+
+  let worstRoll = 0;
+  let worstRollAt = 0;
+  for (let deg = 0; deg <= 180; deg += 15) {
+    const v = Math.max(
+      sensitivity([1, 0, 0], deg, "leftHand"),
+      sensitivity([1, 0, 0], deg, "leftLowerArm"),
+    );
+    if (v > worstRoll) { worstRoll = v; worstRollAt = deg; }
+  }
+  check("sensitivity: palm roll has no unstable orientation", worstRoll < LIMIT,
+    `worst ${worstRoll.toFixed(2)}deg at roll ${worstRollAt}deg`);
+
+  // The bend sweep is the one that mattered: the palm normal lines up with
+  // the forearm at 90, and the hand folds back on the arm at 180.
+  let worstBend = 0;
+  let worstBendAt = 0;
+  for (let deg = 0; deg <= 180; deg += 15) {
+    const v = Math.max(
+      sensitivity([0, 0, 1], deg, "leftHand"),
+      sensitivity([0, 0, 1], deg, "leftLowerArm"),
+    );
+    if (v > worstBend) { worstBend = v; worstBendAt = deg; }
+  }
+  check("sensitivity: hand bend has no unstable orientation", worstBend < LIMIT,
+    `worst ${worstBend.toFixed(2)}deg at bend ${worstBendAt}deg`);
+}
+
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);
 console.log("\nALL PASS");

@@ -28,9 +28,9 @@ import { restDirOf } from "./referenceRig.ts";
 import { DEFAULT_IDLE_PARAMS, writeIdleDelta, type IdleParams } from "./idlePose.ts";
 import { RELAXED_POSE } from "./relaxedPose.ts";
 import {
+  angleOf,
   copyQ,
   cross,
-  dot,
   fromBasis,
   fromUnitVectors,
   identity,
@@ -38,10 +38,10 @@ import {
   multiply,
   normalize,
   quat,
-  rejectFrom,
-  rotateV3,
+  scaleRotation,
   setAxisAngle,
   slerp,
+  twistAbout,
   sub,
   v3,
   type Q4,
@@ -68,8 +68,17 @@ export interface SolverOptions {
   torsoSplit: [number, number, number];
   /** Share of head rotation taken by the neck rather than the head bone. */
   neckShare: number;
-  /** Derive forearm roll from the hand plane (SPEC.md 5.6). */
+  /** Derive forearm roll from the hand (SPEC.md 5.6). */
   twist: boolean;
+  /**
+   * Hard limit on forearm roll, degrees.
+   *
+   * Generous on purpose. The rest pose is palm-down, which is already around
+   * 75 degrees pronated, so the real range from there toward palm-up is about
+   * 160 degrees -- a tighter limit would clip genuine motion. This exists to
+   * bound a pathological solve, not to model the joint.
+   */
+  maxTwistDegrees: number;
   /**
    * sitting holds the legs in a standing pose and never drives them, which is
    * right for a subject at a desk. standing drives them from landmarks.
@@ -119,6 +128,7 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   torsoSplit: [0.3, 0.3, 0.4],
   neckShare: 0.4,
   twist: true,
+  maxTwistDegrees: 160,
   posture: "sitting",
   useHandLandmarks: true,
   visibilityThreshold: 0.5,
@@ -215,21 +225,6 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** Signed angle from `a` to `b` measured about unit `axis`. */
-function signedAngleAbout(
-  a: Readonly<V3>,
-  b: Readonly<V3>,
-  axis: Readonly<V3>,
-  scratchA: V3,
-  scratchB: V3,
-  scratchC: V3,
-): number {
-  normalize(scratchA, rejectFrom(scratchA, a, axis));
-  normalize(scratchB, rejectFrom(scratchB, b, axis));
-  cross(scratchC, scratchA, scratchB);
-  return Math.atan2(dot(scratchC, axis), dot(scratchA, scratchB));
-}
-
 export class PoseSolver {
   options: SolverOptions;
   /** Idle motion applied to whatever is not being tracked (SPEC.md 8). */
@@ -276,8 +271,6 @@ export class PoseSolver {
   private readonly sa = v3();
   private readonly sb = v3();
   private readonly sc = v3();
-  private readonly ref = v3();
-  private readonly normal = v3();
   private readonly palmX = v3();
   private readonly palmY = v3();
   private readonly palmZ = v3();
@@ -556,32 +549,42 @@ export class PoseSolver {
     normalize(this.axisY, sub(this.axisY, this.pc, this.pb));
     fromUnitVectors(this.qb, restDirOf(lowerBone), this.axisY);
 
-    // A real palm frame beats the pose model's three knuckle estimates for
-    // both roll and hand direction, so it is preferred when available.
-    const palm = this.usePalmFrame(hand) ? this.solvePalm(hand as Float32Array, side) : false;
+    /*
+     * Forearm roll and hand orientation are solved together.
+     *
+     * A full hand orientation is built first, then the part of it that
+     * rotates about the forearm's own axis is extracted and given to the
+     * forearm; the hand keeps the remainder automatically, since its local
+     * rotation is computed against the forearm that now carries the twist.
+     *
+     * This replaces measuring the roll as an angle between reference vectors
+     * projected perpendicular to the forearm, which was singular whenever the
+     * palm normal lined up with the forearm -- the projection collapsed and
+     * noise chose the angle, so the hand shook at that one orientation while
+     * the input was perfectly still.
+     */
+    const haveHand = this.usePalmFrame(hand)
+      ? this.solvePalm(hand as Float32Array, side)
+      : this.solveHandFromPose(points, visibility, lm, side, handBone);
 
-    const twisted = palm
-      ? this.twistFromPalm(this.qb, this.axisY)
-      : this.computeTwist(points, visibility, lm, side, this.qb, this.axisY);
-    if (twisted) multiply(this.qb, this.qTwist, this.qb);
-    this.setBone(pose, lowerBone, this.qb, this.worldOf(upperBone), lowerConfidence, dt);
-
-    if (palm) {
-      // The palm frame is already a full orientation, so it is used directly
-      // rather than being rebuilt from a direction plus a separate twist.
-      this.setBone(pose, handBone, this.qPalm, this.worldOf(lowerBone), handConfidence, dt);
-      return;
+    if (haveHand && this.options.twist) {
+      // rel = hand orientation expressed relative to the un-rolled forearm.
+      invert(this.qa, this.qb);
+      multiply(this.qa, this.qa, this.qPalm);
+      const conditioning = twistAbout(this.qTwist, this.qa, restDirOf(lowerBone));
+      // Faded out rather than cut off near the degenerate case, so an
+      // impossible hand position produces no twist instead of a noisy one,
+      // and crossing into that region does not pop.
+      scaleRotation(this.qTwist, this.qTwist, smoothstep(0.1, 0.35, conditioning));
+      this.clampTwist(this.qTwist, restDirOf(lowerBone));
+      multiply(this.qb, this.qb, this.qTwist);
     }
 
-    // Fallback: wrist -> midpoint of index and pinky. An 8cm vector from
-    // low-fidelity landmarks, which is why the palm frame is preferred.
-    midpoint(this.handMid, points, lm.index, lm.pinky);
-    normalize(this.axisZ, sub(this.axisZ, this.handMid, this.pc));
-    fromUnitVectors(this.qa, restDirOf(handBone), this.axisZ);
-    // Carry the forearm twist through, otherwise the hand counter-rotates by
-    // exactly the twist that was just applied to its parent.
-    if (twisted) multiply(this.qa, this.qTwist, this.qa);
-    this.setBone(pose, handBone, this.qa, this.worldOf(lowerBone), handConfidence, dt);
+    this.setBone(pose, lowerBone, this.qb, this.worldOf(upperBone), lowerConfidence, dt);
+
+    if (haveHand) {
+      this.setBone(pose, handBone, this.qPalm, this.worldOf(lowerBone), handConfidence, dt);
+    }
   }
 
   /**
@@ -722,65 +725,64 @@ export class PoseSolver {
   }
 
   /**
-   * Forearm roll measured against the palm frame rather than the pose
-   * model's three knuckles. Same method, far better input.
-   */
-  private twistFromPalm(swing: Readonly<Q4>, boneAxis: Readonly<V3>): boolean {
-    if (!this.options.twist) return false;
-
-    rotateV3(this.ref, swing, [0, 1, 0]);
-    const angle = signedAngleAbout(this.ref, this.palmY, boneAxis, this.sa, this.sb, this.sc);
-    if (!Number.isFinite(angle)) return false;
-
-    setAxisAngle(this.qTwist, boneAxis, angle);
-    return true;
-  }
-
-  /**
-   * Forearm roll from the hand plane.
+   * Hand orientation from the pose model's three knuckle estimates.
    *
-   * Wrist, index and pinky define a plane whose normal rolls with the
-   * forearm, which recovers the one rotation two joints cannot give
-   * (SPEC.md 5.6). Noisier than the swing, so it is gated and toggleable.
-   *
-   * Returns true if `this.qTwist` holds a twist to apply.
+   * The fallback for backends without real hand landmarks. Same output shape
+   * as solvePalm, so the forearm roll is extracted identically; the input is
+   * simply much weaker (SPEC.md 5.6).
    */
-  private computeTwist(
+  private solveHandFromPose(
     points: Float32Array,
     visibility: Float32Array,
     lm: ArmLandmarks,
     side: Side,
-    swing: Readonly<Q4>,
-    boneAxis: Readonly<V3>,
+    handBone: HumanBoneName,
   ): boolean {
-    if (!this.options.twist) return false;
     if (meanVisibility(visibility, [lm.index, lm.pinky]) < this.options.visibilityThreshold) {
       return false;
     }
 
-
     readPoint(this.ta, points, lm.wrist);
     readPoint(this.tb, points, lm.index);
     readPoint(this.tc, points, lm.pinky);
+
+    midpoint(this.handMid, points, lm.index, lm.pinky);
+    sub(this.palmX, this.handMid, this.ta);
+    if (vectorLength(this.palmX) < 1e-5) return false;
+    normalize(this.palmX, this.palmX);
+
     sub(this.sa, this.tb, this.ta);
     sub(this.sb, this.tc, this.ta);
-    cross(this.normal, this.sa, this.sb);
-    if (normalizeLength(this.normal) < 1e-5) return false;
-    normalize(this.normal, this.normal);
+    cross(this.palmY, this.sa, this.sb);
+    if (vectorLength(this.palmY) < 1e-6) return false;
+    normalize(this.palmY, this.palmY);
 
     const sign = TWIST_SIGN[side];
-    this.normal[0] *= sign;
-    this.normal[1] *= sign;
-    this.normal[2] *= sign;
+    this.palmY[0] *= sign;
+    this.palmY[1] *= sign;
+    this.palmY[2] *= sign;
 
-    // Where the rest "up" axis ended up after the swing, versus where the
-    // hand plane says it should be.
-    rotateV3(this.ref, swing, [0, 1, 0]);
-    const angle = signedAngleAbout(this.ref, this.normal, boneAxis, this.sa, this.sb, this.sc);
-    if (!Number.isFinite(angle)) return false;
+    const restSign = restDirOf(handBone)[0] < 0 ? -1 : 1;
+    this.palmX[0] *= restSign;
+    this.palmX[1] *= restSign;
+    this.palmX[2] *= restSign;
 
-    setAxisAngle(this.qTwist, boneAxis, angle);
+    normalize(this.palmZ, cross(this.palmZ, this.palmX, this.palmY));
+    normalize(this.palmY, cross(this.palmY, this.palmZ, this.palmX));
+    fromBasis(this.qPalm, this.palmX, this.palmY, this.palmZ);
     return true;
+  }
+
+  /** Keeps forearm roll inside an anatomically possible range. */
+  private clampTwist(twist: Q4, axis: Readonly<V3>): void {
+    const limit = (this.options.maxTwistDegrees * Math.PI) / 180;
+    const angle = angleOf(twist);
+    if (angle <= limit) return;
+
+    // angleOf is unsigned, so recover the sign from the axial component.
+    const sign =
+      twist[0] * axis[0] + twist[1] * axis[1] + twist[2] * axis[2] >= 0 ? 1 : -1;
+    setAxisAngle(twist, axis, sign * limit);
   }
 }
 
@@ -790,10 +792,6 @@ function approach(dt: number, tau: number): number {
 }
 
 function vectorLength(a: Readonly<V3>): number {
-  return Math.hypot(a[0], a[1], a[2]);
-}
-
-function normalizeLength(a: Readonly<V3>): number {
   return Math.hypot(a[0], a[1], a[2]);
 }
 

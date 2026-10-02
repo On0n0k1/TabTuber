@@ -437,6 +437,7 @@ function wireSolverControls(
 
   folder.add(solver.options, "neckShare", 0, 1, 0.05);
   folder.add(solver.options, "twist");
+  folder.add(solver.options, "maxTwistDegrees", 20, 180, 5).name("max twist (deg)");
   folder.add(solver.options, "useHandLandmarks").name("use palm frame");
 
   // Degradation constants (SPEC.md 5.7). All provisional and only settleable

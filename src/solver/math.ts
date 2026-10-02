@@ -259,6 +259,46 @@ export function slerp(out: Q4, a: Readonly<Q4>, b: Readonly<Q4>, t: number): Q4 
   return out;
 }
 
+/**
+ * The component of `q` that rotates about `axis` (swing-twist decomposition).
+ *
+ * Replaces measuring twist as the angle between two reference vectors
+ * projected perpendicular to the axis. That approach is singular whenever a
+ * reference becomes parallel to the axis -- the projection collapses and the
+ * angle is decided by noise, which shows up as a limb shaking at a particular
+ * orientation while the input is still.
+ *
+ * It degrades as the rotation approaches 180 degrees perpendicular to the
+ * axis, where there is genuinely no twist to extract. The RETURN VALUE is
+ * that conditioning, 1 when the twist is well defined and 0 when it is not,
+ * so callers can fade the result out instead of trusting a noise-driven
+ * value near the degenerate case.
+ */
+export function twistAbout(out: Q4, q: Readonly<Q4>, axis: Readonly<V3>): number {
+  const d = q[0] * axis[0] + q[1] * axis[1] + q[2] * axis[2];
+  out[0] = axis[0] * d;
+  out[1] = axis[1] * d;
+  out[2] = axis[2] * d;
+  out[3] = q[3];
+
+  const len = Math.hypot(out[0], out[1], out[2], out[3]);
+  if (len < EPS) {
+    identity(out);
+    return 0;
+  }
+
+  out[0] /= len;
+  out[1] /= len;
+  out[2] /= len;
+  out[3] /= len;
+  return len;
+}
+
+/** Angle of a unit quaternion in radians, always in [0, PI]. */
+export function angleOf(q: Readonly<Q4>): number {
+  return 2 * Math.acos(Math.min(1, Math.abs(q[3])));
+}
+
 const IDENTITY: Q4 = [0, 0, 0, 1];
 
 /** Scales a rotation toward identity. Used for the torso split. */

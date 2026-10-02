@@ -7,6 +7,7 @@
 
 import { Camera } from "./capture/camera.ts";
 import { LandmarkFilter } from "./filter/oneEuro.ts";
+import { AvatarSlot, enableVrmDrop } from "./render/avatarSlot.ts";
 import { DebugRig } from "./render/debugRig.ts";
 import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
@@ -84,6 +85,12 @@ function boot(): void {
   const interpolator = new PoseInterpolator();
   const debugRig = new DebugRig();
   stage.scene.add(debugRig.object);
+
+  // The avatar occupies the debug rig's slot. Overlapping them is deliberate:
+  // with the compare offset at zero they coincide exactly, which is how a
+  // mapping fault shows up as the two disagreeing (SPEC.md 12).
+  const avatarSlot = new AvatarSlot();
+  stage.scene.add(avatarSlot.group);
 
   // Smoothed raw landmarks, then the same data converted to three.js space.
   // Both allocated once and overwritten each frame.
@@ -173,16 +180,27 @@ function boot(): void {
 
   panel.addViewToggle("landmarks", true, (v) => overlay.setVisible(v));
   panel.addViewToggle("stickFigure", true, (v) => stickFigure.setVisible(v));
+  // Off by default once an avatar loads; the rig stays one click away as the
+  // reference for whether a fault is in the mapping or the solver.
   panel.addViewToggle("debugRig", true, (v) => debugRig.setVisible(v));
+  panel.addViewToggle("avatar", true, (v) => avatarSlot.setVisible(v));
   panel.addViewToggle("mirror", view.mirror, (v) => {
     view.mirror = v;
   });
 
-  applyCompareOffset(view.compareOffset, stickFigure, debugRig);
-  wireSolverControls(panel, solver, view, stickFigure, debugRig);
+  applyCompareOffset(view.compareOffset, stickFigure, debugRig, avatarSlot);
+  wireAvatar(avatarSlot, stage, banner, debugRig);
+  wireSolverControls(panel, solver, view, stickFigure, debugRig, avatarSlot);
   wireFilterControls(panel, filter);
   wireMotionControls(panel, interpolator);
   wireTrackingReadouts(panel, solver);
+  // Height and hip height together say whether a model is correctly scaled
+  // and correctly grounded; a hip height of 0 means it will sit in the floor.
+  panel.addReadoutGroup(
+    "Avatar",
+    ["height", "hipHeight"],
+    () => [avatarSlot.avatar?.height ?? 0, avatarSlot.avatar?.hipHeight ?? 0],
+  );
   const applyPosture = (posture: PostureMode): void => {
     solver.options.posture = posture;
     stage.frameFor(posture);
@@ -239,6 +257,12 @@ function boot(): void {
     renderFps.tick();
     interpolator.step(dt);
     debugRig.apply(interpolator.current);
+
+    // apply() writes the normalised pose; update() drives spring bones and
+    // copies it onto the raw rig, so the order matters.
+    avatarSlot.apply(interpolator.current);
+    avatarSlot.update(dt);
+
     panel.update();
   });
   stage.start();
@@ -313,9 +337,56 @@ function applyCompareOffset(
   offset: number,
   stickFigure: StickFigure,
   debugRig: DebugRig,
+  avatarSlot: AvatarSlot,
 ): void {
   stickFigure.object.position.x = -offset;
   debugRig.setOffsetX(offset);
+  avatarSlot.setOffsetX(offset);
+}
+
+/**
+ * Loads the staged avatar and accepts any .vrm dropped on the page.
+ *
+ * Framing follows the model's measured height rather than the model being
+ * rescaled to fit: rescaling breaks spring-bone physics, which are tuned in
+ * absolute units, and tracking is scale-free regardless (SPEC.md 7.2).
+ */
+function wireAvatar(
+  avatarSlot: AvatarSlot,
+  stage: Stage,
+  banner: StatusBanner,
+  debugRig: DebugRig,
+): void {
+  avatarSlot.onStatus((s) => {
+    switch (s.kind) {
+      case "loading":
+        banner.show("busy", `Loading ${s.label}...`);
+        break;
+      case "ready": {
+        stage.setSubjectHeight(s.height);
+        // The rig has served its purpose once a real avatar is up; it stays
+        // available from the panel as the reference when something looks off.
+        debugRig.setVisible(false);
+        if (s.warnings.length > 0) {
+          banner.show("info", s.warnings.map((w) => w.message).join("  |  "));
+        } else {
+          banner.hide();
+        }
+        break;
+      }
+      case "error":
+        banner.show("error", `${s.label}: ${s.message}`);
+        break;
+      case "empty":
+        break;
+    }
+  });
+
+  enableVrmDrop(document.body, (buffer, name) => {
+    void avatarSlot.load(buffer, name);
+  });
+
+  void avatarSlot.load("/models/avatar.vrm", "avatar.vrm");
 }
 
 /**
@@ -328,6 +399,7 @@ function wireSolverControls(
   view: { mirror: boolean; compareOffset: number },
   stickFigure: StickFigure,
   debugRig: DebugRig,
+  avatarSlot: AvatarSlot,
 ): void {
   const folder = panel.folder("Solver");
 
@@ -360,7 +432,7 @@ function wireSolverControls(
   folder
     .add(view, "compareOffset", 0, 1.2, 0.05)
     .name("compare offset")
-    .onChange((v: number) => applyCompareOffset(v, stickFigure, debugRig));
+    .onChange((v: number) => applyCompareOffset(v, stickFigure, debugRig, avatarSlot));
 }
 
 /**

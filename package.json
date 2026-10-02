@@ -15,7 +15,8 @@
     "check:math": "node --experimental-strip-types src/solver/math.check.ts",
     "check:solver": "node --experimental-strip-types src/solver/poseSolver.check.ts",
     "check": "npm run check:math && npm run check:solver && npm run check:filter",
-    "check:filter": "node --experimental-strip-types src/filter/oneEuro.check.ts"
+    "check:filter": "node --experimental-strip-types src/filter/oneEuro.check.ts",
+    "inspect-vrm": "node scripts/inspect-vrm.mjs"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",
@@ -24,6 +25,7 @@
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
+    "@pixiv/three-vrm": "^3.5.5",
     "lil-gui": "^0.21.0",
     "three": "^0.186.1"
   }

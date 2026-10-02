@@ -12,7 +12,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-/** Subject height in metres, matching the reference rig (SPEC.md 7.1.1). */
+/** Fallback subject height in metres, from the reference rig (SPEC.md 7.1.1). */
 export const SUBJECT_HEIGHT_M = 1.6;
 
 /**
@@ -38,6 +38,15 @@ export class Stage {
 
   /** Helpers grouped so they can be hidden in one go for capture. */
   readonly helpers = new THREE.Group();
+
+  /**
+   * Framing follows the loaded model rather than the model being rescaled to
+   * suit the framing. Rescaling would break spring-bone physics, which are
+   * tuned in absolute units at the authored scale, and tracking is
+   * scale-free anyway since the solver only writes rotations (SPEC.md 7.2).
+   */
+  private subjectHeight = SUBJECT_HEIGHT_M;
+  private posture: "sitting" | "standing" = "sitting";
 
   private readonly callbacks: FrameCallback[] = [];
   private readonly clock = new THREE.Clock();
@@ -109,15 +118,24 @@ export class Stage {
    * upper body, which is what a desk VTuber's audience sees; standing pulls
    * back far enough for the whole figure.
    */
-  frameFor(posture: "sitting" | "standing"): void {
+  frameFor(posture: "sitting" | "standing" = this.posture): void {
+    this.posture = posture;
+    const h = this.subjectHeight;
+
     if (posture === "standing") {
-      this.camera.position.set(0, SUBJECT_HEIGHT_M * 0.6, 3.4);
-      this.controls.target.set(0, SUBJECT_HEIGHT_M * 0.5, 0);
+      this.camera.position.set(0, h * 0.6, h * 2.125);
+      this.controls.target.set(0, h * 0.5, 0);
     } else {
-      this.camera.position.set(0, SUBJECT_HEIGHT_M * 0.85, 2.1);
-      this.controls.target.set(0, SUBJECT_HEIGHT_M * 0.78, 0);
+      this.camera.position.set(0, h * 0.85, h * 1.3125);
+      this.controls.target.set(0, h * 0.78, 0);
     }
     this.controls.update();
+  }
+
+  /** Reframes for a newly loaded model of a different size. */
+  setSubjectHeight(height: number): void {
+    if (height > 0.1 && height < 100) this.subjectHeight = height;
+    this.frameFor();
   }
 
   onFrame(cb: FrameCallback): void {

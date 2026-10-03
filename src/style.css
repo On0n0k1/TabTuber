@@ -85,12 +85,17 @@ body[data-bg="key"] {
 }
 
 /*
- * Camera preview. Mirrored for display only -- the pixels handed to the
- * tracker are never flipped (see src/capture/camera.ts).
+ * Camera preview, bottom LEFT. lil-gui docks itself to the right edge and is
+ * tall enough to cover a preview placed there, which hides the camera at
+ * exactly the moment it is most wanted: first load, when you are checking
+ * whether tracking came up at all.
+ *
+ * Mirrored for display only -- the pixels handed to the tracker are never
+ * flipped (see src/capture/camera.ts).
  */
 #ui video {
   position: fixed;
-  right: 12px;
+  left: 12px;
   bottom: 12px;
   width: 240px;
   border-radius: 4px;
@@ -105,7 +110,7 @@ body[data-bg="key"] {
  */
 .overlay2d {
   position: fixed;
-  right: 12px;
+  left: 12px;
   bottom: 12px;
   transform: scaleX(-1);
   pointer-events: none;

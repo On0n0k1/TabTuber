@@ -11,7 +11,9 @@
  * so no coordinate flipping happens here.
  */
 
+import { HAND, HAND_CONNECTIONS, THUMB_CONNECTIONS } from "../tracker/handLandmarks.ts";
 import { CONNECTIONS, CONNECTION_GROUPS } from "../tracker/landmarks.ts";
+import { HAND_LANDMARK_COUNT, type HandFrame } from "../types.ts";
 import { REGION_COLORS, toCss } from "../render/palette.ts";
 import type { PoseFrame } from "../types.ts";
 
@@ -72,6 +74,9 @@ export class Overlay2D {
       ctx.stroke();
     }
 
+    this.drawHand(frame.leftHand, "L", displayWidth, displayHeight, 0x4cc9f0);
+    this.drawHand(frame.rightHand, "R", displayWidth, displayHeight, 0xf77f00);
+
     for (let i = 0; i < frame.visibility.length; i++) {
       const v = frame.visibility[i] ?? 0;
       ctx.beginPath();
@@ -87,4 +92,92 @@ export class Overlay2D {
       }
     }
   }
+
+  /**
+   * Draws the real 21-point hand, with the thumb highlighted.
+   *
+   * The pose model contributes only three crude knuckle estimates, so without
+   * this the overlay shows nothing of what actually drives the palm frame.
+   *
+   * It also reports the decisive comparison for a flipped hand: which side
+   * the CAMERA sees, read from the winding of the projected palm triangle and
+   * therefore unambiguous, against which side the MODEL believes it sees,
+   * read from the depth of its own landmarks. When those disagree the tracker
+   * has mistaken the palm for the back of the hand, and no amount of solver
+   * work can recover it.
+   */
+  private drawHand(
+    hand: HandFrame | null,
+    label: string,
+    w: number,
+    h: number,
+    color: number,
+  ): void {
+    if (!hand?.present) return;
+    const ctx = this.ctx;
+
+    const x = (i: number): number => (hand.image[i * 2] ?? 0) * w;
+    const y = (i: number): number => (hand.image[i * 2 + 1] ?? 0) * h;
+
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = toCss(color, 0.9);
+    ctx.beginPath();
+    for (const [a, b] of HAND_CONNECTIONS) {
+      ctx.moveTo(x(a), y(a));
+      ctx.lineTo(x(b), y(b));
+    }
+    ctx.stroke();
+
+    // Thumb in a colour nothing else uses, since which side it is on is the
+    // whole question.
+    ctx.strokeStyle = toCss(0x8aff80, 1);
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    for (const [a, b] of THUMB_CONNECTIONS) {
+      ctx.moveTo(x(a), y(a));
+      ctx.lineTo(x(b), y(b));
+    }
+    ctx.stroke();
+
+    for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+      ctx.beginPath();
+      ctx.arc(x(i), y(i), 1.6, 0, Math.PI * 2);
+      ctx.fillStyle = toCss(0xffffff, 0.9);
+      ctx.fill();
+    }
+
+    // Winding of the projected palm: positive and negative correspond to the
+    // two sides of the hand, and the projection cannot be wrong about it.
+    const ax = x(HAND.INDEX_MCP) - x(HAND.WRIST);
+    const ay = y(HAND.INDEX_MCP) - y(HAND.WRIST);
+    const bx = x(HAND.PINKY_MCP) - x(HAND.WRIST);
+    const by = y(HAND.PINKY_MCP) - y(HAND.WRIST);
+    const seen = ax * by - ay * bx;
+
+    // The model's own belief, from the depth it assigned those same points.
+    const wz = hand.world;
+    const fx = (wz[HAND.MIDDLE_MCP * 3] ?? 0) - (wz[HAND.WRIST * 3] ?? 0);
+    const fy = (wz[HAND.MIDDLE_MCP * 3 + 1] ?? 0) - (wz[HAND.WRIST * 3 + 1] ?? 0);
+    const cx2 = (wz[HAND.PINKY_MCP * 3] ?? 0) - (wz[HAND.INDEX_MCP * 3] ?? 0);
+    const cy2 = (wz[HAND.PINKY_MCP * 3 + 1] ?? 0) - (wz[HAND.INDEX_MCP * 3 + 1] ?? 0);
+    // Only the z component of forward x across is needed: its sign is which
+    // way the palm faces along the view axis.
+    const believed = fx * cy2 - fy * cx2;
+
+    ctx.save();
+    ctx.scale(-1, 1); // undo the preview mirror so the text reads
+    ctx.font = "11px ui-monospace, monospace";
+    ctx.fillStyle = Math.sign(seen) === Math.sign(believed)
+      ? toCss(0x8aff80, 1)
+      : toCss(0xff5566, 1);
+    const row = label === "L" ? 14 : 28;
+    ctx.fillText(
+      `${label} seen ${seen > 0 ? "+" : "-"}  model ${believed > 0 ? "+" : "-"}` +
+        `${Math.sign(seen) === Math.sign(believed) ? "" : "  FLIPPED"}`,
+      -w + 6,
+      row,
+    );
+    ctx.restore();
+  }
 }
+

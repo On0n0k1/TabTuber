@@ -33,6 +33,42 @@ export interface MicParams {
   release: number;
 }
 
+/**
+ * The browser's own audio processing, exposed as toggles.
+ *
+ * These are standard MediaTrackConstraints, so this is the public noise
+ * cancelling API -- no model to ship and nothing to implement. Chrome routes
+ * them through the WebRTC audio processing module, the same code that cleans
+ * up calls.
+ *
+ * The defaults are not uniform, because the three do different things:
+ *
+ * - `noiseSuppression` removes background noise while preserving speech,
+ *   which is what the mouth should follow. On.
+ * - `echoCancellation` removes what the speakers are playing back into the
+ *   microphone. Matters for VTubing specifically: without it, game audio
+ *   through speakers moves the avatar's mouth. On.
+ * - `autoGainControl` normalises loudness, which is exactly the variation the
+ *   mouth is supposed to express. It would flatten a shout and a whisper into
+ *   the same mouth. Off.
+ *
+ * Worth knowing what suppression does and does not catch: it targets
+ * STATIONARY noise -- fans, hum, room tone. A snap, clap or knock is a
+ * transient and will largely pass through, so the duration gate remains the
+ * defence against those.
+ */
+export interface MicProcessing {
+  noiseSuppression: boolean;
+  echoCancellation: boolean;
+  autoGainControl: boolean;
+}
+
+export const DEFAULT_MIC_PROCESSING: MicProcessing = {
+  noiseSuppression: true,
+  echoCancellation: true,
+  autoGainControl: false,
+};
+
 export const DEFAULT_MIC_PARAMS: MicParams = {
   gain: 1.6,
   threshold: 2.5,
@@ -48,6 +84,8 @@ export type MicState =
 
 export class MicLevel {
   params: MicParams = { ...DEFAULT_MIC_PARAMS };
+  /** The browser's own noise cancelling; see MicProcessing. */
+  processing: MicProcessing = { ...DEFAULT_MIC_PROCESSING };
   /** Rejects transients like typing, which are too brief to be speech. */
   readonly gate = new SpeechGate();
 
@@ -125,13 +163,7 @@ export class MicLevel {
 
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          // All three would fight the envelope: the mouth should follow what
-          // was said, not what a noise suppressor decided to keep.
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
+        audio: { ...this.processing },
         video: false,
       });
     } catch (err) {
@@ -173,6 +205,26 @@ export class MicLevel {
     this.historyTime.length = 0;
     this.historyEnergy.length = 0;
     this.setState({ kind: "off" });
+  }
+
+  /**
+   * Pushes the current processing settings to the live stream.
+   *
+   * applyConstraints changes them in place, so toggling does not interrupt
+   * the microphone or re-prompt for permission. A browser that refuses a
+   * constraint is reported rather than silently ignored, since "I turned
+   * noise suppression on and nothing changed" is otherwise indistinguishable
+   * from it not working.
+   */
+  async applyProcessing(): Promise<void> {
+    const track = this.stream?.getAudioTracks()[0];
+    if (!track) return;
+    try {
+      await track.applyConstraints({ ...this.processing });
+      console.info("mic: processing updated", { ...this.processing });
+    } catch (err) {
+      console.warn("mic: the browser refused these audio constraints", err);
+    }
   }
 
   /** Call once per rendered frame. `timestampMs` stamps the history entry. */

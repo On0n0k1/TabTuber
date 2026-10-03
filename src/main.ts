@@ -676,6 +676,13 @@ function wireLipSync(
   folder.add(proxy, "enabled").name("microphone").onChange(apply);
   if (proxy.enabled) apply(true);
 
+  // The browser's own noise cancelling, applied live rather than on restart.
+  // Suppression targets steady noise; transients still need the duration gate.
+  const processing = folder.addFolder("Noise cancelling");
+  for (const key of ["noiseSuppression", "echoCancellation", "autoGainControl"] as const) {
+    processing.add(mic.processing, key).onChange(() => void mic.applyProcessing());
+  }
+
   folder.add(mouth.params, "mode", ["amplitude", "animated"]);
   folder.add(mouth.params, "openness", 0, 1, 0.05);
   folder.add(mic.params, "gain", 0.2, 6, 0.1).name("mic gain");

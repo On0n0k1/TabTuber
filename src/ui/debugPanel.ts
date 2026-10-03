@@ -26,6 +26,7 @@ interface Readouts {
   lookahead: string;
   delegate: string;
   backend: string;
+  mic: string;
   confidence: string;
 }
 
@@ -41,6 +42,7 @@ export interface DebugPanelOptions {
     lookaheadMs: number;
     delegate: string;
     backend: string;
+    mic: string;
     confidence: number;
   };
 }
@@ -69,6 +71,7 @@ export class DebugPanel {
     lookahead: "-",
     delegate: "-",
     backend: "-",
+    mic: "off",
     confidence: "-",
   };
 
@@ -160,6 +163,10 @@ export class DebugPanel {
     this.readouts.lookahead = s.lookaheadMs > 0 ? `${s.lookaheadMs.toFixed(0)} ms` : "off";
     this.readouts.delegate = s.delegate;
     this.readouts.backend = s.backend;
+    // Stated rather than inferred: a browser that already holds microphone
+    // permission grants it without prompting, so the absence of a prompt says
+    // nothing about whether the microphone is running.
+    this.readouts.mic = s.mic;
     this.readouts.confidence = s.confidence > 0 ? s.confidence.toFixed(2) : "-";
 
     for (const group of this.readoutGroups) {

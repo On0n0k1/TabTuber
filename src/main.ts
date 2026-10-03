@@ -108,6 +108,10 @@ function boot(): void {
   const blink = new Blink();
   const mic = new MicLevel();
   const mouth = new Mouth();
+  let micState = "off";
+  mic.onState((s) => {
+    micState = s.kind === "error" ? `error: ${s.message}` : s.kind;
+  });
   const debugRig = new DebugRig();
   stage.scene.add(debugRig.object);
 
@@ -182,6 +186,7 @@ function boot(): void {
       delegate: host.current?.ready ? host.current.delegate : "-",
       backend: host.current?.name ?? "-",
       confidence: interpolator.current.confidence,
+      mic: micState,
     }),
   });
 

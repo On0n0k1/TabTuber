@@ -16,6 +16,7 @@ import {
   HolisticLandmarker,
   type HolisticLandmarkerResult,
   type Landmark,
+  type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
 import {
   HAND_LANDMARK_COUNT,
@@ -36,6 +37,7 @@ export interface HolisticTrackerOptions {
 /** Mutable hand buffer; the frame exposes it as a readonly HandFrame. */
 interface HandBuffer {
   world: Float32Array;
+  image: Float32Array;
   present: boolean;
 }
 
@@ -50,10 +52,12 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
   private readonly visibility = new Float32Array(LANDMARK_COUNT);
   private readonly left: HandBuffer = {
     world: new Float32Array(HAND_LANDMARK_COUNT * 3),
+    image: new Float32Array(HAND_LANDMARK_COUNT * 2),
     present: false,
   };
   private readonly right: HandBuffer = {
     world: new Float32Array(HAND_LANDMARK_COUNT * 3),
+    image: new Float32Array(HAND_LANDMARK_COUNT * 2),
     present: false,
   };
 
@@ -105,8 +109,8 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
       this.visibility[i] = p.visibility ?? 1;
     }
 
-    fillHand(this.left, result.leftHandWorldLandmarks[0]);
-    fillHand(this.right, result.rightHandWorldLandmarks[0]);
+    fillHand(this.left, result.leftHandWorldLandmarks[0], result.leftHandLandmarks[0]);
+    fillHand(this.right, result.rightHandWorldLandmarks[0], result.rightHandLandmarks[0]);
 
     return {
       world: this.world,
@@ -124,18 +128,28 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
  * pose landmarks, so no reassignment is needed here. Mirroring is applied
  * downstream in the coordinate conversion, as for everything else.
  */
-function fillHand(buffer: HandBuffer, landmarks: Landmark[] | undefined): void {
+function fillHand(
+  buffer: HandBuffer,
+  landmarks: Landmark[] | undefined,
+  image: NormalizedLandmark[] | undefined,
+): void {
   if (!landmarks || landmarks.length < HAND_LANDMARK_COUNT) {
     buffer.present = false;
     return;
   }
   for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
     const lm = landmarks[i];
-    if (!lm) continue;
-    const o = i * 3;
-    buffer.world[o] = lm.x;
-    buffer.world[o + 1] = lm.y;
-    buffer.world[o + 2] = lm.z;
+    if (lm) {
+      const o = i * 3;
+      buffer.world[o] = lm.x;
+      buffer.world[o + 1] = lm.y;
+      buffer.world[o + 2] = lm.z;
+    }
+    const px = image?.[i];
+    if (px) {
+      buffer.image[i * 2] = px.x;
+      buffer.image[i * 2 + 1] = px.y;
+    }
   }
   buffer.present = true;
 }

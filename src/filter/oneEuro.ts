@@ -81,11 +81,26 @@ export class LandmarkFilter {
    *
    * Exists because not all landmarks are equally trustworthy. The hips sit at
    * the frame boundary for a seated subject and feed the torso up-axis, so
-   * their noise propagates into the whole upper body (SPEC.md 5.8). Only
-   * minCutoff is scaled, not beta: the aim is more smoothing while still,
-   * without making a landmark unresponsive to genuine fast motion.
+   * their noise propagates into the whole upper body (SPEC.md 5.8).
    */
   readonly cutoffScale: Float32Array;
+
+  /**
+   * Per-landmark multiplier on beta. Below 1 makes the filter less willing to
+   * treat fast change as real motion.
+   *
+   * Separate from cutoffScale because the two express different beliefs.
+   * Scaling minCutoff alone says "this landmark is noisy at rest" -- right for
+   * the hips, which drift rather than jump. Scaling beta says "fast change
+   * from this landmark is probably not real", which is the correct belief
+   * about a palm turned edge-on, where the geometry that would carry real
+   * motion has collapsed (SPEC.md 12).
+   *
+   * Scaling minCutoff alone there achieves nothing measurable: frame-to-frame
+   * noise produces a large apparent rate, so the beta term dominates the
+   * cutoff and swamps any change to minCutoff.
+   */
+  readonly betaScale: Float32Array;
 
   private readonly count: number;
   private readonly value: Float32Array;
@@ -99,6 +114,7 @@ export class LandmarkFilter {
   constructor(count: number) {
     this.count = count;
     this.cutoffScale = new Float32Array(count).fill(1);
+    this.betaScale = new Float32Array(count).fill(1);
     this.value = new Float32Array(count * 3);
     this.derivative = new Float32Array(count * 3);
   }
@@ -142,6 +158,7 @@ export class LandmarkFilter {
     for (let i = 0; i < this.count; i++) {
       const base = i * 3;
       const scale = this.cutoffScale[i] ?? 1;
+      const bScale = this.betaScale[i] ?? 1;
       for (let axis = 0; axis < 3; axis++) {
         const k = base + axis;
         const params = axis === 2 ? this.z : this.xy;
@@ -155,7 +172,8 @@ export class LandmarkFilter {
           dAlpha * rate + (1 - dAlpha) * (this.derivative[k] ?? 0);
         this.derivative[k] = smoothedRate;
 
-        const cutoff = params.minCutoff * scale + params.beta * Math.abs(smoothedRate);
+        const cutoff =
+          params.minCutoff * scale + params.beta * bScale * Math.abs(smoothedRate);
         const alpha = smoothingAlpha(cutoff, dt);
         const filtered = alpha * x + (1 - alpha) * prev;
 

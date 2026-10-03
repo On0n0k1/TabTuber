@@ -14,9 +14,10 @@
     "fetch-assets": "node scripts/fetch-assets.mjs",
     "check:math": "node --experimental-strip-types src/solver/math.check.ts",
     "check:solver": "node --experimental-strip-types src/solver/poseSolver.check.ts",
-    "check": "npm run check:math && npm run check:solver && npm run check:filter",
+    "check": "npm run check:math && npm run check:solver && npm run check:filter && npm run check:cond",
     "check:filter": "node --experimental-strip-types src/filter/oneEuro.check.ts",
-    "inspect-vrm": "node scripts/inspect-vrm.mjs"
+    "inspect-vrm": "node scripts/inspect-vrm.mjs",
+    "check:cond": "node --experimental-strip-types src/solver/palmConditioning.check.ts"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",

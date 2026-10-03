@@ -31,6 +31,14 @@ export const HAND_LANDMARK_COUNT = 21;
 export interface HandFrame {
   /** HAND_LANDMARK_COUNT * 3, metric, origin at the hand's geometric centre. */
   readonly world: Float32Array;
+  /**
+   * HAND_LANDMARK_COUNT * 2, normalised image space, x and y only.
+   *
+   * Depth is deliberately absent: this exists to measure how the hand is
+   * presented to the camera, and the whole point is that information hidden
+   * in depth is the information that is missing (SPEC.md 12).
+   */
+  readonly image: Float32Array;
   /** False when the backend ran but found no hand this frame. */
   readonly present: boolean;
 }

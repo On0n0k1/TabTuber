@@ -105,7 +105,14 @@ export class MicLevel {
    * something requested at load.
    */
   async start(): Promise<void> {
-    if (this.state.kind === "on" || this.state.kind === "starting") return;
+    if (this.state.kind === "on" || this.state.kind === "starting") {
+      console.info(`mic: start ignored, already ${this.state.kind}`);
+      return;
+    }
+    // Logged on the way in as well as on failure. A browser that already
+    // holds permission grants it without prompting, so without this there is
+    // no way to tell "started silently" from "never called".
+    console.info("mic: requesting microphone access");
     this.setState({ kind: "starting" });
 
     try {
@@ -120,6 +127,10 @@ export class MicLevel {
         video: false,
       });
     } catch (err) {
+      // Surfaced in the console as well as the UI. Swallowing it entirely
+      // left a user-triggered failure with no trace anywhere a developer
+      // would look.
+      console.warn("mic: getUserMedia failed", err);
       this.setState({ kind: "error", message: describeMicError(err) });
       return;
     }
@@ -134,10 +145,15 @@ export class MicLevel {
     source.connect(this.analyser);
     this.samples = new Float32Array(new ArrayBuffer(this.analyser.fftSize * 4));
 
+    console.info(
+      `mic: running at ${this.context.sampleRate} Hz` +
+        ` (${this.stream.getAudioTracks()[0]?.label ?? "unknown device"})`,
+    );
     this.setState({ kind: "on" });
   }
 
   stop(): void {
+    if (this.state.kind !== "off") console.info("mic: stopping");
     for (const track of this.stream?.getTracks() ?? []) track.stop();
     void this.context?.close();
     this.stream = null;

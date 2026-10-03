@@ -114,5 +114,66 @@ function readDegrees(p: AvatarPose): number {
   check("output is usable before the window fills", !ready && Math.abs(readDegrees(buf.output) - 45) < 0.01);
 }
 
+// --- holding still must actually be smoothed ------------------------------
+//
+// The check this file was missing. An earlier version selected a single real
+// sample instead of averaging, which carried that sample's full noise and so
+// smoothed nothing at all when the subject held still -- and got worse with a
+// larger window, because consecutive outputs could come from samples far
+// apart in the noise sequence. Every other check here passed throughout.
+{
+  const rand = (() => {
+    let x = 4242 >>> 0;
+    return () => {
+      x = (x * 1664525 + 1013904223) >>> 0;
+      return x / 4294967296 - 0.5;
+    };
+  })();
+
+  /** RMS frame-to-frame change, which is what reads as jitter. */
+  const jitterOf = (lookahead: number): { input: number; output: number } => {
+    const buf = new PoseBuffer();
+    buf.lookahead = lookahead;
+    const ins: number[] = [];
+    const outs: number[] = [];
+    for (let i = 0; i < 300; i++) {
+      const d = rand() * 3;
+      ins.push(d);
+      buf.push(poseAt(d, i * 33.3));
+      outs.push(readDegrees(buf.output));
+    }
+    const rms = (a: number[]): number => {
+      let acc = 0;
+      for (let i = 11; i < a.length; i++) acc += ((a[i] as number) - (a[i - 1] as number)) ** 2;
+      return Math.sqrt(acc / (a.length - 11));
+    };
+    return { input: rms(ins), output: rms(outs) };
+  };
+
+  const one = jitterOf(1);
+  check("holding still is measurably smoothed", one.output < one.input / 2,
+    `${one.input.toFixed(2)} -> ${one.output.toFixed(2)} deg`);
+
+  const three = jitterOf(3);
+  check("more lookahead smooths more, not less", three.output < one.output,
+    `lookahead 1 ${one.output.toFixed(2)}, lookahead 3 ${three.output.toFixed(2)} deg`);
+}
+
+// --- repeated spikes must stay rejected, not just one ---------------------
+{
+  const buf = new PoseBuffer();
+  buf.lookahead = 1;
+  let worst = 0;
+  let previous = 0;
+  for (let i = 0; i < 200; i++) {
+    const d = i % 20 === 10 ? 180 : 0;
+    buf.push(poseAt(d, i * 33.3));
+    const got = readDegrees(buf.output);
+    if (i > 5) worst = Math.max(worst, Math.abs(got - previous));
+    previous = got;
+  }
+  check("a recurring spike is rejected every time", worst < 1, `worst step ${worst.toFixed(2)} deg`);
+}
+
 if (failures > 0) throw new Error(`${failures} buffer check failure(s)`);
 console.log("\nALL PASS");

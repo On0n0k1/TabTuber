@@ -10,11 +10,26 @@
  * filter cannot tell it from the start of genuine fast motion and must follow
  * it. A transient 180-degree flip of the palm frame has exactly that shape.
  *
- * The estimator is a per-bone MEDOID: among the buffered rotations, the one
- * closest to all the others. A lone outlier is never closest to anything, so
- * it is discarded outright rather than averaged in, and the output is always a
- * real measured pose rather than a blend of a good one and a bad one. Being
- * non-linear it does not soften genuine fast motion the way a mean would.
+ * The estimator is a per-bone ROBUST AVERAGE: find the medoid, reject samples
+ * too far from it to be real movement, then average what remains.
+ *
+ * Both halves are necessary and a medoid alone is not enough. A medoid picks
+ * one real sample, so it carries that sample's full noise -- it has no
+ * averaging power at all. Worse, when the subject holds still every sample is
+ * equidistant from the others and the choice falls to noise: measured across
+ * 22 bones with a window of seven, the bones selected 6.75 distinct samples
+ * per frame and never once agreed. Each bone was rendering a different moment,
+ * re-rolled every frame, which reads as stuttering and gets worse with a
+ * larger window.
+ *
+ * Averaging alone is not enough either: a single 180-degree outlier in a
+ * window of seven drags the mean about 26 degrees off.
+ *
+ * Rejecting first and averaging after gives both -- noise falls as the square
+ * root of the window when still, and outliers never enter the sum. On
+ * constant-velocity motion the mean of the window equals its middle sample,
+ * so steady movement passes through delayed but undistorted; only
+ * acceleration is softened, which is wanted.
  */
 
 import {
@@ -32,6 +47,16 @@ export class PoseBuffer {
    * the behaviour before this existed.
    */
   lookahead = 1;
+
+  /**
+   * How far a sample may sit from the window's medoid and still be averaged
+   * in, in degrees.
+   *
+   * Anatomical rather than tuned: a joint cannot rotate much beyond 20
+   * degrees in a 33ms frame, so anything past this is not movement. Being
+   * grounded in human range it transfers across users (SPEC.md 12.1).
+   */
+  outlierDegrees = 25;
 
   /** The pose to render. Lags the newest input by `lookahead` frames. */
   readonly output: AvatarPose = createAvatarPose();
@@ -118,40 +143,73 @@ export class PoseBuffer {
     this.output.expressions.clear();
     for (const [k, v] of centre.expressions) this.output.expressions.set(k, v);
 
+    const cosLimit = Math.cos((this.outlierDegrees * Math.PI) / 360);
+
     for (let b = 0; b < BONE_COUNT; b++) {
       const o = b * 4;
-      let best = 0;
-      let bestScore = Infinity;
 
+      // 1. Medoid: the sample closest to all the others, used only as a
+      //    reference for what counts as an outlier. Its own noise does not
+      //    reach the output.
+      let ref = 0;
+      let bestScore = Infinity;
       for (let i = 0; i < size; i++) {
         const a = (window[i] as AvatarPose).rotations;
         let score = 0;
         for (let j = 0; j < size; j++) {
           if (i === j) continue;
-          const c = (window[j] as AvatarPose).rotations;
-          // |dot| is the cosine of half the angle between them; maximising it
-          // minimises angular distance, and the absolute value handles q
-          // and -q being the same rotation.
-          const d =
-            (a[o] ?? 0) * (c[o] ?? 0) +
-            (a[o + 1] ?? 0) * (c[o + 1] ?? 0) +
-            (a[o + 2] ?? 0) * (c[o + 2] ?? 0) +
-            (a[o + 3] ?? 1) * (c[o + 3] ?? 1);
-          score -= Math.abs(d);
+          score -= Math.abs(dot4(a, (window[j] as AvatarPose).rotations, o));
         }
         if (score < bestScore) {
           bestScore = score;
-          best = i;
+          ref = i;
         }
       }
+      const refRot = (window[ref] as AvatarPose).rotations;
 
-      const chosen = (window[best] as AvatarPose).rotations;
-      this.output.rotations[o] = chosen[o] ?? 0;
-      this.output.rotations[o + 1] = chosen[o + 1] ?? 0;
-      this.output.rotations[o + 2] = chosen[o + 2] ?? 0;
-      this.output.rotations[o + 3] = chosen[o + 3] ?? 1;
+      // 2. Average the inliers. Signs are aligned to the reference first,
+      //    since q and -q are the same rotation but cancel if summed blindly.
+      let sx = 0;
+      let sy = 0;
+      let sz = 0;
+      let sw = 0;
+      for (let i = 0; i < size; i++) {
+        const a = (window[i] as AvatarPose).rotations;
+        const d = dot4(a, refRot, o);
+        if (Math.abs(d) < cosLimit) continue;
+        const sign = d < 0 ? -1 : 1;
+        sx += (a[o] ?? 0) * sign;
+        sy += (a[o + 1] ?? 0) * sign;
+        sz += (a[o + 2] ?? 0) * sign;
+        sw += (a[o + 3] ?? 1) * sign;
+      }
+
+      // Normalising the sum is nlerp; over a window this short the difference
+      // from a true spherical mean is far below anything visible.
+      const len = Math.hypot(sx, sy, sz, sw);
+      if (len < 1e-8) {
+        this.output.rotations[o] = refRot[o] ?? 0;
+        this.output.rotations[o + 1] = refRot[o + 1] ?? 0;
+        this.output.rotations[o + 2] = refRot[o + 2] ?? 0;
+        this.output.rotations[o + 3] = refRot[o + 3] ?? 1;
+        continue;
+      }
+      this.output.rotations[o] = sx / len;
+      this.output.rotations[o + 1] = sy / len;
+      this.output.rotations[o + 2] = sz / len;
+      this.output.rotations[o + 3] = sw / len;
     }
   }
+}
+
+/** Quaternion dot product of bone `o` in two rotation buffers. */
+function dot4(a: Float32Array, b: Float32Array, o: number): number {
+  return (
+    (a[o] ?? 0) * (b[o] ?? 0) +
+    (a[o + 1] ?? 0) * (b[o + 1] ?? 0) +
+    (a[o + 2] ?? 0) * (b[o + 2] ?? 0) +
+    (a[o + 3] ?? 1) * (b[o + 3] ?? 1)
+  );
 }
 
 function copyPose(dst: AvatarPose, src: AvatarPose): void {

@@ -23,6 +23,7 @@ interface Readouts {
   trackerFps: string;
   /** Inference time alone. End-to-end latency lands with SPEC.md section 9. */
   inference: string;
+  lookahead: string;
   delegate: string;
   backend: string;
   confidence: string;
@@ -37,6 +38,7 @@ export interface DebugPanelOptions {
     cameraFps: number;
     trackerFps: number;
     inferenceMs: number;
+    lookaheadMs: number;
     delegate: string;
     backend: string;
     confidence: number;
@@ -55,6 +57,7 @@ export class DebugPanel {
     resolution: "-",
     trackerFps: "-",
     inference: "-",
+    lookahead: "-",
     delegate: "-",
     backend: "-",
     confidence: "-",
@@ -145,6 +148,7 @@ export class DebugPanel {
     this.readouts.cameraFps = s.cameraFps > 0 ? s.cameraFps.toFixed(0) : "-";
     this.readouts.trackerFps = s.trackerFps > 0 ? s.trackerFps.toFixed(0) : "-";
     this.readouts.inference = s.inferenceMs > 0 ? `${s.inferenceMs.toFixed(1)} ms` : "-";
+    this.readouts.lookahead = s.lookaheadMs > 0 ? `${s.lookaheadMs.toFixed(0)} ms` : "off";
     this.readouts.delegate = s.delegate;
     this.readouts.backend = s.backend;
     this.readouts.confidence = s.confidence > 0 ? s.confidence.toFixed(2) : "-";

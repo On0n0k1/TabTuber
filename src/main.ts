@@ -14,6 +14,7 @@ import {
 import { AvatarSlot, enableVrmDrop } from "./render/avatarSlot.ts";
 import { Blink, BLINK_EXPRESSION } from "./render/blink.ts";
 import { DebugRig } from "./render/debugRig.ts";
+import { PoseBuffer, MAX_LOOKAHEAD } from "./render/poseBuffer.ts";
 import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
@@ -92,6 +93,10 @@ function boot(): void {
   const pose = createAvatarPose();
   // The rig is driven from the interpolator's pose, not the solver's, so it
   // moves at render rate rather than in 30Hz steps.
+  // Holds a few solved poses so the renderer can filter with the future as
+  // well as the past, which is the only way to reject a one-frame spike
+  // rather than follow it (SPEC.md 6.1).
+  const poseBuffer = new PoseBuffer();
   const interpolator = new PoseInterpolator();
   const blink = new Blink();
   const debugRig = new DebugRig();
@@ -154,6 +159,7 @@ function boot(): void {
       cameraFps: cameraFps.staleAfter(1000),
       trackerFps: trackerFps.staleAfter(1000),
       inferenceMs: host.current?.inferenceMs ?? 0,
+      lookaheadMs: poseBuffer.latencyMs,
       delegate: host.current?.ready ? host.current.delegate : "-",
       backend: host.current?.name ?? "-",
       confidence: interpolator.current.confidence,
@@ -206,7 +212,9 @@ function boot(): void {
     mirrorImagePoints(imagePoints, frame.image, view.mirror);
     solver.solve(points, visibility, pose, frame.timestampMs, handPoints, imagePoints);
     pose.timestampMs = frame.timestampMs;
-    interpolator.setTarget(pose);
+
+    poseBuffer.push(pose);
+    interpolator.setTarget(poseBuffer.output);
   });
 
   panel.addViewToggle("landmarks", true, (v) => overlay.setVisible(v));
@@ -223,7 +231,7 @@ function boot(): void {
   wireAvatar(avatarSlot, stage, banner, debugRig);
   wireSolverControls(panel, solver, view, stickFigure, debugRig, avatarSlot);
   wireFilterControls(panel, filter, handFilters);
-  wireMotionControls(panel, interpolator);
+  wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
   wireTrackingReadouts(panel, solver);
   // Height and hip height together say whether a model is correctly scaled
@@ -260,6 +268,7 @@ function boot(): void {
         // Stale filter state from before the gap would otherwise be blended
         // into the first frames of the new stream.
         filter.reset();
+        poseBuffer.reset();
         ui.append(camera.element);
         camera.element.style.display = "";
         measurePreview(camera.element, (w, h) => {
@@ -579,10 +588,18 @@ function wireLivelinessControls(
   folder.add(blink.params, "duration", 0.05, 0.4, 0.01).name("blink time (s)");
 }
 
-function wireMotionControls(panel: DebugPanel, interpolator: PoseInterpolator): void {
+function wireMotionControls(
+  panel: DebugPanel,
+  interpolator: PoseInterpolator,
+  poseBuffer: PoseBuffer,
+): void {
   const folder = panel.folder("Motion");
   folder.add(interpolator, "enabled").name("interpolate");
   folder.add(interpolator, "tau", 0, 0.25, 0.005).name("tau (s)");
+
+  // Each frame of lookahead costs one frame interval of latency, and the
+  // Stats readout shows what that currently is. 0 is the old behaviour.
+  folder.add(poseBuffer, "lookahead", 0, MAX_LOOKAHEAD, 1).name("lookahead (frames)");
 }
 
 /** Waits a frame so the preview has been laid out before it is measured. */

@@ -12,6 +12,7 @@
  * quiet passages that occur naturally between words (SPEC.md 12.1).
  */
 
+import { SileroVad } from "./sileroVad.ts";
 import { SpeechGate } from "./speechGate.ts";
 
 /** Seconds of history kept, so the mouth can be aligned to a delayed body. */
@@ -69,6 +70,17 @@ export const DEFAULT_MIC_PROCESSING: MicProcessing = {
   autoGainControl: false,
 };
 
+/**
+ * How speech is told apart from everything else.
+ *
+ * `duration` rejects things that are short, which covers typing and clicks
+ * with one counter and no model. `silero` runs a small neural model that
+ * knows the shape of speech, which also rejects sustained non-speech -- music,
+ * fans, another person -- at the cost of several megabytes fetched on first
+ * use and inference on every frame.
+ */
+export type SpeechDetector = "duration" | "silero";
+
 export const DEFAULT_MIC_PARAMS: MicParams = {
   gain: 1.6,
   threshold: 2.5,
@@ -88,6 +100,12 @@ export class MicLevel {
   processing: MicProcessing = { ...DEFAULT_MIC_PROCESSING };
   /** Rejects transients like typing, which are too brief to be speech. */
   readonly gate = new SpeechGate();
+  /** The model alternative; nothing is loaded until it is selected. */
+  readonly silero = new SileroVad();
+  /** Probability above which Silero's verdict counts as speech. */
+  sileroThreshold = 0.5;
+
+  private detectorMode: SpeechDetector = "duration";
 
   private context: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -127,7 +145,33 @@ export class MicLevel {
   }
 
   get speaking(): boolean {
-    return this.gate.speaking;
+    return this.usingSilero
+      ? this.silero.probability >= this.sileroThreshold
+      : this.gate.speaking;
+  }
+
+  get detector(): SpeechDetector {
+    return this.detectorMode;
+  }
+
+  /** Falls back to the duration gate until the model is actually running. */
+  private get usingSilero(): boolean {
+    return this.detectorMode === "silero" && this.silero.ready;
+  }
+
+  /**
+   * Switches detector. Selecting `silero` loads the model, which is why it is
+   * a deliberate choice rather than something decided at startup.
+   */
+  async setDetector(mode: SpeechDetector): Promise<void> {
+    this.detectorMode = mode;
+    if (mode !== "silero") {
+      this.silero.stop();
+      return;
+    }
+    if (this.stream && this.context) {
+      await this.silero.start(this.stream, this.context);
+    }
   }
 
   get running(): boolean {
@@ -190,6 +234,11 @@ export class MicLevel {
         ` (${this.stream.getAudioTracks()[0]?.label ?? "unknown device"})`,
     );
     this.setState({ kind: "on" });
+
+    // Restore the model if it was the selected detector before a restart.
+    if (this.detectorMode === "silero") {
+      await this.silero.start(this.stream, this.context);
+    }
   }
 
   stop(): void {
@@ -202,6 +251,7 @@ export class MicLevel {
     this.energy = 0;
     this.rms = 0;
     this.gate.reset();
+    this.silero.stop();
     this.historyTime.length = 0;
     this.historyEnergy.length = 0;
     this.setState({ kind: "off" });
@@ -252,7 +302,13 @@ export class MicLevel {
 
     // Gated before the envelope, so a rejected transient never starts the
     // mouth opening at all rather than opening it and being pulled back.
-    const target = this.gate.update(raw, dt);
+    //
+    // The duration gate is advanced either way, so switching detectors does
+    // not hand over a gate that has been frozen mid-utterance.
+    const gated = this.gate.update(raw, dt);
+    const target = this.usingSilero
+      ? (this.silero.probability >= this.sileroThreshold ? raw : 0)
+      : gated;
 
     const tau = target > this.energy ? this.params.attack : this.params.release;
     this.energy += (target - this.energy) * approach(dt, tau);

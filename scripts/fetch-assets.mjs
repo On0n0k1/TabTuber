@@ -85,10 +85,42 @@ async function download({ file, url }) {
   console.log(`model -> public/models/${file} (${(size / 1e6).toFixed(1)} MB)`);
 }
 
+/**
+ * Silero VAD assets: the audio worklet, the model, and the ONNX runtime.
+ *
+ * Self-hosted for the same reason the MediaPipe assets are -- a CDN
+ * dependency means the page is broken offline and hostage to an upstream path
+ * change (SPEC.md section 9). Copied from node_modules rather than
+ * downloaded, since they ship with the package.
+ */
+async function stageVad() {
+  const dest = join(root, "public/vad");
+  await mkdir(join(dest, "ort"), { recursive: true });
+
+  const vadDist = join(root, "node_modules/@ricky0123/vad-web/dist");
+  for (const file of ["vad.worklet.bundle.min.js", "silero_vad_v5.onnx"]) {
+    await cp(join(vadDist, file), join(dest, file));
+  }
+
+  // Only the SIMD build is referenced by default; copying all of them would
+  // add tens of megabytes to the checkout for no benefit.
+  const ortDist = join(root, "node_modules/onnxruntime-web/dist");
+  for (const file of ["ort-wasm-simd-threaded.wasm", "ort-wasm-simd-threaded.jsep.wasm", "ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.jsep.mjs"]) {
+    try {
+      await cp(join(ortDist, file), join(dest, "ort", file));
+    } catch {
+      // Not every build ships every variant; the runtime picks what it finds.
+    }
+  }
+  console.log("vad   -> public/vad (worklet, silero v5, onnx runtime)");
+}
+
 async function main() {
   await mkdir(dirname(WASM_DEST), { recursive: true });
   await cp(WASM_SRC, WASM_DEST, { recursive: true });
   console.log(`wasm  -> public/mediapipe/wasm`);
+
+  await stageVad();
 
   for (const item of DOWNLOADS) await download(item);
 }

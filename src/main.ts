@@ -187,6 +187,7 @@ function boot(): void {
       backend: host.current?.name ?? "-",
       confidence: interpolator.current.confidence,
       mic: micState,
+      vad: mic.silero.state,
     }),
   });
 
@@ -689,6 +690,15 @@ function wireLipSync(
   folder.add(mic.params, "threshold", 1, 8, 0.1).name("noise gate");
   folder.add(mic.params, "release", 0.02, 0.4, 0.01).name("close time (s)");
 
+  // duration rejects what is short; silero rejects what does not sound like
+  // speech, at the cost of several megabytes fetched on first selection.
+  const detector = { mode: "duration" as "duration" | "silero" };
+  folder
+    .add(detector, "mode", ["duration", "silero"])
+    .name("detector")
+    .onChange((mode: "duration" | "silero") => void mic.setDetector(mode));
+  folder.add(mic, "sileroThreshold", 0, 1, 0.05).name("silero threshold");
+
   // Rejects typing and clicks by duration: a keystroke is far shorter than a
   // syllable. Raise onset if typing still gets through.
   folder.add(mic.gate.params, "onset", 0.01, 0.3, 0.01).name("min duration (s)");
@@ -705,6 +715,13 @@ function wireLipSync(
     mic.current,
     mic.speaking ? 1 : 0,
   ], 3);
+
+  // Separate group so the model's cost is answerable rather than assumed,
+  // which is the whole point of it being a toggle.
+  panel.addReadoutGroup("Silero VAD", ["probability", "frameGapMs"], () => [
+    mic.silero.probability,
+    mic.silero.inferenceMs,
+  ], 2);
 }
 
 function wireMotionControls(

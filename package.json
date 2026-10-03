@@ -29,6 +29,7 @@
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
     "@pixiv/three-vrm": "^3.5.5",
+    "@ricky0123/vad-web": "^0.0.31",
     "lil-gui": "^0.21.0",
     "three": "^0.186.1"
   }

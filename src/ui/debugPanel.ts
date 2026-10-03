@@ -47,6 +47,15 @@ export interface DebugPanelOptions {
 
 export class DebugPanel {
   private readonly gui = new GUI({ title: "virtual-avatar" });
+  /**
+   * Folders by title.
+   *
+   * Tracked here rather than read back from lil-gui, whose title lives on an
+   * underscore-prefixed field. That is typed but internal, and a rename on a
+   * dependency bump would make folders quietly stop collapsing rather than
+   * fail loudly.
+   */
+  private readonly folders = new Map<string, GUI>();
   private readonly camera: Camera;
   private readonly stage: Stage;
   private readonly sample: DebugPanelOptions["sample"];
@@ -82,17 +91,17 @@ export class DebugPanel {
     this.camera = opts.camera;
     this.sample = opts.sample;
 
-    const stats = this.gui.addFolder("Stats");
+    const stats = this.folder("Stats");
     for (const key of Object.keys(this.readouts) as (keyof Readouts)[]) {
       stats.add(this.readouts, key).listen().disable();
     }
 
-    this.cameraFolder = this.gui.addFolder("Camera");
+    this.cameraFolder = this.folder("Camera");
     this.cameraFolder
       .add({ restart: () => void this.camera.start(this.selectedDeviceId || undefined) }, "restart")
       .name("restart");
 
-    this.viewFolder = this.gui.addFolder("View");
+    this.viewFolder = this.folder("View");
     const view = this.viewFolder;
     view
       .add(this.view, "background", ["checker", "key", "transparent"])
@@ -165,7 +174,23 @@ export class DebugPanel {
 
   /** Exposed so later stages can add their own folders without owning the GUI. */
   folder(name: string): GUI {
-    return this.gui.addFolder(name);
+    const folder = this.gui.addFolder(name);
+    this.folders.set(name, folder);
+    return folder;
+  }
+
+  /**
+   * Collapses every folder except the named ones.
+   *
+   * The panel has grown to a dozen folders as features landed, which is long
+   * enough that controls below the fold are effectively invisible -- the lip
+   * sync toggle went unnoticed for exactly this reason. Collapsed by default
+   * means the whole set is reachable without scrolling.
+   */
+  collapseAllExcept(keep: readonly string[]): void {
+    for (const [title, folder] of this.folders) {
+      if (!keep.includes(title)) folder.close();
+    }
   }
 
   /**
@@ -181,7 +206,7 @@ export class DebugPanel {
     sample: () => readonly number[],
     digits = 2,
   ): void {
-    const folder = this.gui.addFolder(name);
+    const folder = this.folder(name);
     const proxy: Record<string, string> = {};
     for (const label of labels) {
       proxy[label] = "-";

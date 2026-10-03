@@ -319,6 +319,10 @@ function boot(): void {
     }
   });
 
+  // Only the things reached most often stay open; everything else is one
+  // click away rather than below the fold.
+  panel.collapseAllExcept(["Stats", "Lip sync", "View"]);
+
   // Started once, not per camera-ready: the video element is stable across
   // restarts, so starting a chain per state change would leave the old one
   // running and double the reported rate.

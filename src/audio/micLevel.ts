@@ -12,6 +12,8 @@
  * quiet passages that occur naturally between words (SPEC.md 12.1).
  */
 
+import { SpeechGate } from "./speechGate.ts";
+
 /** Seconds of history kept, so the mouth can be aligned to a delayed body. */
 const HISTORY_SECONDS = 0.5;
 
@@ -46,6 +48,8 @@ export type MicState =
 
 export class MicLevel {
   params: MicParams = { ...DEFAULT_MIC_PARAMS };
+  /** Rejects transients like typing, which are too brief to be speech. */
+  readonly gate = new SpeechGate();
 
   private context: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -82,6 +86,10 @@ export class MicLevel {
 
   get noiseFloor(): number {
     return this.floor;
+  }
+
+  get speaking(): boolean {
+    return this.gate.speaking;
   }
 
   get running(): boolean {
@@ -161,6 +169,7 @@ export class MicLevel {
     this.analyser = null;
     this.energy = 0;
     this.rms = 0;
+    this.gate.reset();
     this.historyTime.length = 0;
     this.historyEnergy.length = 0;
     this.setState({ kind: "off" });
@@ -187,7 +196,11 @@ export class MicLevel {
     const above = Math.max(0, this.rms - this.floor * this.params.threshold);
     // Normalised against the floor rather than an absolute level, so the
     // result is a ratio and transfers across microphones.
-    const target = Math.min(1, (above / (this.floor * 8)) * this.params.gain);
+    const raw = Math.min(1, (above / (this.floor * 8)) * this.params.gain);
+
+    // Gated before the envelope, so a rejected transient never starts the
+    // mouth opening at all rather than opening it and being pulled back.
+    const target = this.gate.update(raw, dt);
 
     const tau = target > this.energy ? this.params.attack : this.params.release;
     this.energy += (target - this.energy) * approach(dt, tau);

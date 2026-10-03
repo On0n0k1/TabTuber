@@ -681,15 +681,22 @@ function wireLipSync(
   folder.add(mic.params, "gain", 0.2, 6, 0.1).name("mic gain");
   folder.add(mic.params, "threshold", 1, 8, 0.1).name("noise gate");
   folder.add(mic.params, "release", 0.02, 0.4, 0.01).name("close time (s)");
+
+  // Rejects typing and clicks by duration: a keystroke is far shorter than a
+  // syllable. Raise onset if typing still gets through.
+  folder.add(mic.gate.params, "onset", 0.01, 0.3, 0.01).name("min duration (s)");
+  folder.add(mic.gate.params, "hangover", 0.02, 0.6, 0.01).name("hangover (s)");
+  folder.add(mic.gate.params, "openLevel", 0, 0.5, 0.01).name("open level");
   folder.add(mouth.params, "minHold", 0.04, 0.3, 0.01).name("viseme min (s)");
   folder.add(mouth.params, "maxHold", 0.05, 0.5, 0.01).name("viseme max (s)");
 
   // A meter rather than a number to trust: the gate is set by watching this
   // sit near zero while silent and climb while speaking.
-  panel.addReadoutGroup("Mic", ["level", "floor", "energy"], () => [
+  panel.addReadoutGroup("Mic", ["level", "floor", "energy", "speaking"], () => [
     mic.level,
     mic.noiseFloor,
     mic.current,
+    mic.speaking ? 1 : 0,
   ], 3);
 }
 

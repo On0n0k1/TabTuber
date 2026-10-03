@@ -5,6 +5,8 @@
  * Pipeline: capture -> tracker -> filter -> solver -> render (SPEC.md 4).
  */
 
+import { MicLevel } from "./audio/micLevel.ts";
+import { Mouth } from "./audio/mouth.ts";
 import { Camera } from "./capture/camera.ts";
 import {
   DEFAULT_HAND_XY_PARAMS,
@@ -104,6 +106,8 @@ function boot(): void {
   const poseBuffer = new PoseBuffer();
   const interpolator = new PoseInterpolator();
   const blink = new Blink();
+  const mic = new MicLevel();
+  const mouth = new Mouth();
   const debugRig = new DebugRig();
   stage.scene.add(debugRig.object);
 
@@ -250,6 +254,7 @@ function boot(): void {
   wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
+  wireLipSync(panel, banner, mic, mouth);
   wireTrackingReadouts(panel, solver);
   // Visible so a correction is something you can see happening rather than
   // infer from the avatar looking right.
@@ -323,9 +328,19 @@ function boot(): void {
     renderFps.tick();
     interpolator.step(dt);
 
-    // Written after step(), which copies expressions from the target: the
-    // blink is generated here at render rate, not carried from the solver.
+    // Written after step(), which copies expressions from the target: these
+    // are generated here at render rate, not carried from the solver.
     interpolator.current.expressions.set(BLINK_EXPRESSION, blink.update(dt));
+
+    // Energy is read at the moment the body is rendering, not the newest
+    // sample, so the mouth does not lead a body delayed by the lookahead
+    // buffer (SPEC.md 6.1).
+    mic.update(dt, performance.now());
+    mouth.update(
+      mic.sampleAt(interpolator.current.timestampMs),
+      dt,
+      interpolator.current.expressions,
+    );
 
     debugRig.apply(interpolator.current);
 
@@ -618,6 +633,55 @@ function wireLivelinessControls(
   folder.add(blink.params, "minInterval", 0.5, 8, 0.1).name("blink min (s)");
   folder.add(blink.params, "maxInterval", 0.5, 12, 0.1).name("blink max (s)");
   folder.add(blink.params, "duration", 0.05, 0.4, 0.01).name("blink time (s)");
+}
+
+/**
+ * Lip sync is opt-in and remembered.
+ *
+ * Browsers refuse to start an AudioContext outside a user gesture, so this
+ * cannot be requested at load even if it were wanted -- and requesting a
+ * microphone from someone who only wanted body tracking would be rude. The
+ * choice persists, so it is a one-time decision rather than a per-session one.
+ */
+function wireLipSync(
+  panel: DebugPanel,
+  banner: StatusBanner,
+  mic: MicLevel,
+  mouth: Mouth,
+): void {
+  const folder = panel.folder("Lip sync");
+
+  mic.onState((s) => {
+    if (s.kind === "error") banner.show("error", s.message);
+    else if (s.kind === "on") banner.hide();
+  });
+
+  const proxy = {
+    enabled: readSetting<"on" | "off">("lipsync", ["on", "off"], "off") === "on",
+  };
+  const apply = (on: boolean): void => {
+    writeSetting("lipsync", on ? "on" : "off");
+    if (on) void mic.start();
+    else mic.stop();
+  };
+  folder.add(proxy, "enabled").name("microphone").onChange(apply);
+  if (proxy.enabled) apply(true);
+
+  folder.add(mouth.params, "mode", ["amplitude", "animated"]);
+  folder.add(mouth.params, "openness", 0, 1, 0.05);
+  folder.add(mic.params, "gain", 0.2, 6, 0.1).name("mic gain");
+  folder.add(mic.params, "threshold", 1, 8, 0.1).name("noise gate");
+  folder.add(mic.params, "release", 0.02, 0.4, 0.01).name("close time (s)");
+  folder.add(mouth.params, "minHold", 0.04, 0.3, 0.01).name("viseme min (s)");
+  folder.add(mouth.params, "maxHold", 0.05, 0.5, 0.01).name("viseme max (s)");
+
+  // A meter rather than a number to trust: the gate is set by watching this
+  // sit near zero while silent and climb while speaking.
+  panel.addReadoutGroup("Mic", ["level", "floor", "energy"], () => [
+    mic.level,
+    mic.noiseFloor,
+    mic.current,
+  ], 3);
 }
 
 function wireMotionControls(

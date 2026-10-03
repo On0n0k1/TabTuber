@@ -20,11 +20,16 @@ import { StickFigure } from "./render/stickFigure.ts";
 import { Stage } from "./render/stage.ts";
 import {
   handToThree,
+  mirrorHandImage,
   mirrorImagePoints,
   mirrorScalars,
   mpToThree,
 } from "./solver/coords.ts";
-import { PoseSolver, type PostureMode } from "./solver/poseSolver.ts";
+import {
+  PoseSolver,
+  type HandInput,
+  type PostureMode,
+} from "./solver/poseSolver.ts";
 import { BONE_INDEX, type HumanBoneName } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
 import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
@@ -129,9 +134,19 @@ function boot(): void {
     left: new Float32Array(HAND_LANDMARK_COUNT * 3),
     right: new Float32Array(HAND_LANDMARK_COUNT * 3),
   };
-  const leftHandPoints = new Float32Array(HAND_LANDMARK_COUNT * 3);
-  const rightHandPoints = new Float32Array(HAND_LANDMARK_COUNT * 3);
-  const handPoints: { left: Float32Array | null; right: Float32Array | null } = {
+  const handWorld = {
+    left: new Float32Array(HAND_LANDMARK_COUNT * 3),
+    right: new Float32Array(HAND_LANDMARK_COUNT * 3),
+  };
+  const handImage = {
+    left: new Float32Array(HAND_LANDMARK_COUNT * 2),
+    right: new Float32Array(HAND_LANDMARK_COUNT * 2),
+  };
+  const handInput: { left: HandInput; right: HandInput } = {
+    left: { world: handWorld.left, image: handImage.left },
+    right: { world: handWorld.right, image: handImage.right },
+  };
+  const handPoints: { left: HandInput | null; right: HandInput | null } = {
     left: null,
     right: null,
   };
@@ -192,8 +207,9 @@ function boot(): void {
 
     if (sourceLeft?.present) {
       handFilters.left.apply(handFiltered.left, sourceLeft.world, frame.timestampMs);
-      handToThree(leftHandPoints, handFiltered.left, view.mirror);
-      handPoints.left = leftHandPoints;
+      handToThree(handWorld.left, handFiltered.left, view.mirror);
+      mirrorHandImage(handImage.left, sourceLeft.image, view.mirror);
+      handPoints.left = handInput.left;
     } else {
       // Reset on loss, or re-acquisition blends in a hand position from
       // before the gap.
@@ -202,8 +218,9 @@ function boot(): void {
     }
     if (sourceRight?.present) {
       handFilters.right.apply(handFiltered.right, sourceRight.world, frame.timestampMs);
-      handToThree(rightHandPoints, handFiltered.right, view.mirror);
-      handPoints.right = rightHandPoints;
+      handToThree(handWorld.right, handFiltered.right, view.mirror);
+      mirrorHandImage(handImage.right, sourceRight.image, view.mirror);
+      handPoints.right = handInput.right;
     } else {
       handFilters.right.reset();
       handPoints.right = null;
@@ -234,6 +251,14 @@ function boot(): void {
   wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
   wireTrackingReadouts(panel, solver);
+  // Visible so a correction is something you can see happening rather than
+  // infer from the avatar looking right.
+  panel.addReadoutGroup(
+    "Depth flip",
+    ["left", "right"],
+    () => [solver.isDepthFlipped("left") ? 1 : 0, solver.isDepthFlipped("right") ? 1 : 0],
+    0,
+  );
   // Height and hip height together say whether a model is correctly scaled
   // and correctly grounded; a hip height of 0 means it will sit in the floor.
   panel.addReadoutGroup(
@@ -467,6 +492,13 @@ function wireSolverControls(
   folder.add(solver.options, "neckShare", 0, 1, 0.05);
   folder.add(solver.options, "twist");
   folder.add(solver.options, "maxTwistDegrees", 20, 180, 5).name("max twist (deg)");
+
+  // Compensates for the tracker inverting a hand's depth (SPEC.md 5.6.2).
+  // On by default but switchable, since it targets a specific failure of one
+  // model and a tracker without it would not need the correction.
+  folder.add(solver.options, "correctHandDepthFlip").name("fix hand depth flip");
+  folder.add(solver.options, "flipMinArea", 0, 0.5, 0.01).name("flip: min area");
+  folder.add(solver.options, "flipHysteresis", 1, 10, 1).name("flip: frames");
   folder.add(solver.options, "useHandLandmarks").name("use palm frame");
 
   // Degradation constants (SPEC.md 5.7). All provisional and only settleable

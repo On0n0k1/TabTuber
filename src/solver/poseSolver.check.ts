@@ -15,7 +15,7 @@
 import { LM } from "../tracker/landmarks.ts";
 import { HIP_HEIGHT_M, mirrorScalars, mpToThree } from "./coords.ts";
 import { BONE_INDEX, LANDMARK_COUNT, createAvatarPose, type HumanBoneName } from "../types.ts";
-import { PoseSolver } from "./poseSolver.ts";
+import { PoseSolver, type HandInput } from "./poseSolver.ts";
 import { HAND } from "../tracker/handLandmarks.ts";
 import {
   DEFAULT_HAND_XY_PARAMS,
@@ -23,7 +23,19 @@ import {
   LandmarkFilter,
 } from "../filter/oneEuro.ts";
 import { HAND_LANDMARK_COUNT } from "../types.ts";
-import { rotateV3, setAxisAngle, quat, v3, type Q4, type V3 } from "./math.ts";
+import {
+  invert as invQ4,
+  multiply as mulQ4,
+  rotateV3,
+  setAxisAngle,
+  quat,
+  v3,
+  type Q4,
+  type V3,
+} from "./math.ts";
+
+const invQ = (q: Q4): Q4 => invQ4(quat(), q);
+const mulQ = (a: Q4, b: Q4): Q4 => mulQ4(quat(), a, b);
 
 let failures = 0;
 const near = (a: number, b: number, eps = 1e-4) => Math.abs(a - b) < eps;
@@ -289,6 +301,25 @@ function makeHand(side: "left" | "right", wristX: number, wristY: number): Float
   return h;
 }
 
+/**
+ * Wraps a hand's world landmarks with a projection consistent with them, so
+ * the depth-flip detector sees agreeing evidence and stays inactive.
+ *
+ * Image y runs down where three.js y runs up, hence the negation.
+ */
+function project(world: Float32Array): HandInput {
+  const image = new Float32Array(HAND_LANDMARK_COUNT * 2);
+  for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+    image[i * 2] = 0.5 + (world[i * 3] ?? 0) * 0.5;
+    image[i * 2 + 1] = 0.5 - ((world[i * 3 + 1] ?? 0) - 1.4) * 0.5;
+  }
+  return { world, image };
+}
+
+function handInput(side: "left" | "right", wristX: number, wristY: number): HandInput {
+  return project(makeHand(side, wristX, wristY));
+}
+
 /** Rotates a hand about its wrist. */
 function rotateHand(h: Float32Array, q: Readonly<Q4>, px: number, py: number): Float32Array {
   const out = new Float32Array(h.length);
@@ -308,7 +339,7 @@ function rotateHand(h: Float32Array, q: Readonly<Q4>, px: number, py: number): F
 // even though Holistic centres hand world landmarks on the hand itself.
 
 {
-  const hands = { left: makeHand("left", 0.65, 1.4), right: makeHand("right", -0.65, 1.4) };
+  const hands = { left: handInput("left", 0.65, 1.4), right: handInput("right", -0.65, 1.4) };
   const s = makeSolver();
   s.solve(rest, visible, pose, 0, hands);
 
@@ -334,7 +365,7 @@ function rotateHand(h: Float32Array, q: Readonly<Q4>, px: number, py: number): F
   const h = rotateHand(makeHand("left", 0.65, 1.4), roll, 0.65, 1.4);
 
   const s = makeSolver();
-  s.solve(rest, visible, pose, 0, { left: h, right: null });
+  s.solve(rest, visible, pose, 0, { left: project(h), right: null });
   const twist = angleOf(boneQuat(pose.rotations, "leftLowerArm"));
   check("palm frame: a 40deg palm roll rolls the forearm",
     Math.abs(twist - 40) < 3, `${twist.toFixed(1)}deg`);
@@ -350,7 +381,7 @@ function rotateHand(h: Float32Array, q: Readonly<Q4>, px: number, py: number): F
 
   const off = makeSolver();
   off.options.useHandLandmarks = false;
-  off.solve(rest, visible, pose, 0, { left: makeHand("left", 0.65, 1.4), right: makeHand("right", -0.65, 1.4) });
+  off.solve(rest, visible, pose, 0, { left: handInput("left", 0.65, 1.4), right: handInput("right", -0.65, 1.4) });
   check("palm frame: can be disabled for comparison",
     isIdentity(boneQuat(pose.rotations, "leftHand"), 1e-3));
 }
@@ -680,9 +711,9 @@ check("gated: confidence drops below 1", pose.confidence < 1);
   const sensitivity = (axis: V3, degrees: number, bone: HumanBoneName): number => {
     const h = posedHand(axis, degrees);
     const s = makeSolver();
-    s.solve(rest, full, pose, 0, { left: jitter(h, 1), right: null });
+    s.solve(rest, full, pose, 0, { left: project(jitter(h, 1)), right: null });
     const a = boneQuat(pose.rotations, bone);
-    s.solve(rest, full, pose, 33.3, { left: jitter(h, 2), right: null });
+    s.solve(rest, full, pose, 33.3, { left: project(jitter(h, 2)), right: null });
     return angleBetween(a, boneQuat(pose.rotations, bone));
   };
 
@@ -769,7 +800,7 @@ check("gated: confidence drops below 1", pose.confidence < 1);
     let n = 0;
     for (let i = 0; i < 120; i++) {
       f.apply(filtered, noisy(hand, i), i * 33.3);
-      s.solve(noisy(rest, i + 500), full, pose, i * 33.3, { left: filtered, right: null });
+      s.solve(noisy(rest, i + 500), full, pose, i * 33.3, { left: project(filtered), right: null });
       const q = boneQuat(pose.rotations, bone);
       // Skip the filter's warm-up.
       if (prev && i > 30) { acc += angleBetweenQ(prev, q) ** 2; n++; }
@@ -788,6 +819,106 @@ check("gated: confidence drops below 1", pose.confidence < 1);
   // is plainly visible shaking.
   check("shake: palm angled down stays steady under depth noise", worst < 1.5,
     `worst ${worst.toFixed(2)}deg at pitch ${worstAt}deg`);
+}
+
+// --- 11. Hand roll-flip correction (SPEC.md 5.6.2) -------------------------
+//
+// The tracker reports a hand rolled 180 degrees about its own axis when it
+// mistakes the palm for the back, which it does reliably for a hand hanging
+// downward. The projection stays correct, so it is the evidence used.
+//
+// The dangerous direction is a FALSE POSITIVE: correcting a hand that was
+// already right would invert a good one. That is checked first.
+{
+  const full = new Float32Array(LANDMARK_COUNT).fill(1);
+
+  /** A hand tilted part way toward the camera: clear projection, real depth. */
+  const tilted = (): Float32Array => {
+    const q = quat();
+    setAxisAngle(q, [1, 0, 0], (50 * Math.PI) / 180);
+    return rotateHand(makeHand("left", 0.65, 1.4), q, 0.65, 1.4);
+  };
+
+  /** What the tracker does wrong: the hand rolled 180 degrees about itself. */
+  const rolled = (h: Float32Array): Float32Array => {
+    const q = quat();
+    setAxisAngle(q, [1, 0, 0], Math.PI);
+    return rotateHand(h, q, 0.65, 1.4);
+  };
+
+  /** Composed world orientation, which is what a viewer sees. */
+  const handWorld = (): Q4 => {
+    const w = quat();
+    mulQ4(w, boneQuat(pose.rotations, "leftShoulder"), boneQuat(pose.rotations, "leftUpperArm"));
+    mulQ4(w, w, boneQuat(pose.rotations, "leftLowerArm"));
+    mulQ4(w, w, boneQuat(pose.rotations, "leftHand"));
+    return [w[0], w[1], w[2], w[3]];
+  };
+
+  const settle = (solver: PoseSolver, hand: HandInput, frames = 8): Q4 => {
+    for (let i = 0; i < frames; i++) {
+      solver.solve(rest, full, pose, i * 33.3, { left: hand, right: null });
+    }
+    return handWorld();
+  };
+
+  const good = tilted();
+  const truth = settle(makeSolver(), project(good));
+
+  // A correct hand must be left alone. This is the failure that would matter.
+  {
+    const s = makeSolver();
+    const got = settle(s, project(good));
+    check("a correct hand is not flagged", !s.isDepthFlipped("left"));
+    // Tolerance covers float noise from composing four quaternions, which is
+    // orders of magnitude below anything visible.
+    check("a correct hand is left untouched",
+      angleOf(mulQ(invQ(truth), got)) < 0.1,
+      `${angleOf(mulQ(invQ(truth), got)).toFixed(3)} deg`);
+  }
+
+  // A rolled hand must be detected and rolled back.
+  {
+    // Image from the REAL hand, reconstruction from the rolled one: exactly
+    // what the tracker produces when it picks the wrong side.
+    const broken: HandInput = { world: rolled(good), image: project(good).image };
+
+    const s = makeSolver();
+    const got = settle(s, broken);
+    check("a rolled hand is detected", s.isDepthFlipped("left"));
+    const diff = angleOf(mulQ(invQ(truth), got));
+    check("a rolled hand is corrected back", diff < 1, `${diff.toFixed(2)} deg from truth`);
+
+    const off = makeSolver();
+    off.options.correctHandDepthFlip = false;
+    const uncorrected = settle(off, broken);
+    const stillWrong = angleOf(mulQ(invQ(truth), uncorrected));
+    check("the option actually disables the correction", stillWrong > 90,
+      `${stillWrong.toFixed(0)} deg wrong with it off`);
+  }
+
+  // Hysteresis: one disagreeing frame must not change the verdict.
+  {
+    const s = makeSolver();
+    settle(s, project(good));
+    s.solve(rest, full, pose, 1000, {
+      left: { world: rolled(good), image: project(good).image },
+      right: null,
+    });
+    check("a single bad frame does not flip the verdict", !s.isDepthFlipped("left"));
+  }
+
+  // Edge-on: the projected palm nearly vanishes, so the detector must abstain
+  // rather than decide from noise.
+  {
+    const edge = makeHand("left", 0.65, 1.4); // palm-down, edge-on to the camera
+    const s = makeSolver();
+    const before = s.isDepthFlipped("left");
+    for (let i = 0; i < 20; i++) {
+      s.solve(rest, full, pose, i * 33.3, { left: project(edge), right: null });
+    }
+    check("an edge-on palm does not change the verdict", s.isDepthFlipped("left") === before);
+  }
 }
 
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);

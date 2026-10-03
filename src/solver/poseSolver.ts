@@ -71,6 +71,22 @@ export interface SolverOptions {
   /** Derive forearm roll from the hand (SPEC.md 5.6). */
   twist: boolean;
   /**
+   * Correct the tracker's palm/back depth ambiguity (SPEC.md 5.6.2).
+   *
+   * On by default, but switchable: it compensates for a specific failure of
+   * one tracking model, observed on one setup, and a model that does not have
+   * that failure would not need it.
+   */
+  correctHandDepthFlip: boolean;
+  /**
+   * Minimum projected palm area before a flip verdict is trusted, as a
+   * fraction of the hand's projected size squared. Dimensionless, so it
+   * transfers across hand sizes and camera distances (SPEC.md 12.1).
+   */
+  flipMinArea: number;
+  /** Consecutive frames that must agree before the verdict changes. */
+  flipHysteresis: number;
+  /**
    * Hard limit on forearm roll, degrees.
    *
    * Generous on purpose. The rest pose is palm-down, which is already around
@@ -128,6 +144,9 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   torsoSplit: [0.3, 0.3, 0.4],
   neckShare: 0.4,
   twist: true,
+  correctHandDepthFlip: true,
+  flipMinArea: 0.15,
+  flipHysteresis: 3,
   maxTwistDegrees: 160,
   posture: "sitting",
   useHandLandmarks: true,
@@ -160,10 +179,22 @@ const HAND_SIGN = { left: 1, right: -1 } as const;
 
 type Side = "left" | "right";
 
-/** Hand landmarks already converted to three.js space, or null if unavailable. */
+/** One hand's landmarks, in both the spaces the solver needs. */
+export interface HandInput {
+  /** HAND_LANDMARK_COUNT * 3, three.js space, from handToThree. */
+  readonly world: Float32Array;
+  /**
+   * HAND_LANDMARK_COUNT * 2, normalised image space, mirrored to match.
+   *
+   * Carried because the projection is the only unambiguous evidence of which
+   * side of the hand faces the camera; see `detectDepthFlip`.
+   */
+  readonly image: Float32Array;
+}
+
 export interface HandPoints {
-  readonly left: Float32Array | null;
-  readonly right: Float32Array | null;
+  readonly left: HandInput | null;
+  readonly right: HandInput | null;
 }
 
 interface ArmLandmarks {
@@ -252,6 +283,18 @@ export class PoseSolver {
    */
   private readonly idleDelta = new Float32Array(BONE_COUNT * 4);
   private idleElapsed = 0;
+
+  /**
+   * Depth-flip verdict per hand, with the hysteresis counter behind it.
+   * `flipped` is what is currently applied; `pending` is what the evidence
+   * has been saying, and only replaces it after enough consecutive frames.
+   */
+  private readonly flipState = {
+    left: { flipped: false, pending: false, agreed: 0 },
+    right: { flipped: false, pending: false, agreed: 0 },
+  };
+
+  private readonly qRoll = quat();
 
   /** Smoothed hip position and its slowly-adapting neutral, image space. */
   private hipX = Number.NaN;
@@ -517,7 +560,7 @@ export class PoseSolver {
     pose: AvatarPose,
     side: Side,
     dt: number,
-    hand: Float32Array | null,
+    hand: HandInput | null,
   ): void {
     const lm = ARM[side];
     const upperChest = this.worldOf("upperChest");
@@ -562,9 +605,15 @@ export class PoseSolver {
      * noise chose the angle, so the hand shook at that one orientation while
      * the input was perfectly still.
      */
-    const haveHand = this.usePalmFrame(hand)
-      ? this.solvePalm(hand as Float32Array, side)
-      : this.solveHandFromPose(points, visibility, lm, side, handBone);
+    let haveHand: boolean;
+    if (this.usePalmFrame(hand)) {
+      const input = hand as HandInput;
+      if (this.options.correctHandDepthFlip) this.updateFlipVerdict(input, side);
+      haveHand = this.solvePalm(input.world, side);
+      if (haveHand) this.unrollPalm(side);
+    } else {
+      haveHand = this.solveHandFromPose(points, visibility, lm, side, handBone);
+    }
 
     if (haveHand && this.options.twist) {
       // rel = hand orientation expressed relative to the un-rolled forearm.
@@ -673,7 +722,103 @@ export class PoseSolver {
     );
   }
 
-  private usePalmFrame(hand: Float32Array | null): boolean {
+  /**
+   * Decides whether the tracker has the hand rolled 180 degrees about its own
+   * axis, and records the verdict.
+   *
+   * WHY THIS HAPPENS. Monocular hand tracking cannot always tell the palm
+   * from the back of the hand: both project to a similar outline, and the
+   * model resolves it by inference rather than measurement. When it decides
+   * wrong -- reliably so for a hand hanging downward, where the hand is
+   * angled away and self-occluding -- it reports the nearest hand pose
+   * consistent with the wrong answer, which is the real hand rolled 180
+   * degrees about its forward axis. The avatar then renders a hand rotated
+   * 180 degrees, and nothing downstream can recover it, because the error is
+   * in the data before the solver sees it.
+   *
+   * WHY IT IS DETECTABLE. The in-image ARRANGEMENT of the landmarks follows
+   * from the picture the camera produced, and a projection cannot be wrong
+   * about the order of points it contains. The model's reconstruction is an
+   * inference, and that is what fails. A 180 degree roll reverses the palm's
+   * winding, so comparing the two readings exposes it.
+   *
+   * Note that a pure DEPTH inversion would be invisible here, and
+   * deliberately so: depth does not enter either winding, and two hands that
+   * differ only in depth are projectively identical. That ambiguity is real
+   * and unresolvable from one image. This detects the case that is not
+   * ambiguous -- where the reconstruction disagrees with the picture.
+   *
+   * Two guards, because the detector degrades where the solver does:
+   *
+   * - AREA. Edge-on, the palm triangle projects to nearly nothing and its
+   *   winding becomes noise. Below `flipMinArea` the verdict is not trusted
+   *   and the previous one is held, which beats guessing and badly beats
+   *   oscillating.
+   * - HYSTERESIS. A borderline hand would otherwise alternate frame to
+   *   frame, which reads worse than a steady wrong answer. The verdict only
+   *   changes after `flipHysteresis` consecutive frames of agreement.
+   */
+  private updateFlipVerdict(hand: HandInput, side: Side): void {
+    const state = this.flipState[side];
+    const wrist = PALM_RIM[0] as number;
+    const index = HAND.INDEX_MCP;
+    const pinky = HAND.PINKY_MCP;
+
+    // Winding of the palm triangle as the camera sees it. Image y runs down
+    // where three.js y runs up, so consistent readings have OPPOSITE signs.
+    const ax = (hand.image[index * 2] ?? 0) - (hand.image[wrist * 2] ?? 0);
+    const ay = (hand.image[index * 2 + 1] ?? 0) - (hand.image[wrist * 2 + 1] ?? 0);
+    const bx = (hand.image[pinky * 2] ?? 0) - (hand.image[wrist * 2] ?? 0);
+    const by = (hand.image[pinky * 2 + 1] ?? 0) - (hand.image[wrist * 2 + 1] ?? 0);
+    const seen = ax * by - ay * bx;
+
+    // Normalised by the hand's own projected size, so the threshold carries
+    // no units and holds for any hand at any distance (SPEC.md 12.1).
+    const span = Math.max(Math.hypot(ax, ay), 1e-6);
+    if (Math.abs(seen) / (span * span) < this.options.flipMinArea) {
+      state.agreed = 0;
+      return;
+    }
+
+    // The same triangle as the model reconstructed it.
+    const cx = (hand.world[index * 3] ?? 0) - (hand.world[wrist * 3] ?? 0);
+    const cy = (hand.world[index * 3 + 1] ?? 0) - (hand.world[wrist * 3 + 1] ?? 0);
+    const dx = (hand.world[pinky * 3] ?? 0) - (hand.world[wrist * 3] ?? 0);
+    const dy = (hand.world[pinky * 3 + 1] ?? 0) - (hand.world[wrist * 3 + 1] ?? 0);
+    const believed = cx * dy - cy * dx;
+
+    const rolled = Math.sign(seen) === Math.sign(believed);
+    if (rolled === state.pending) {
+      state.agreed++;
+    } else {
+      state.pending = rolled;
+      state.agreed = 1;
+    }
+    if (state.agreed >= this.options.flipHysteresis) state.flipped = rolled;
+  }
+
+  /**
+   * Undoes the 180 degree roll by rolling back.
+   *
+   * Applied to the solved orientation rather than to the landmarks, because
+   * the error is a rotation about an axis that is not aligned to anything in
+   * particular, and once the palm frame exists that axis is simply its own
+   * local X. Post-multiplying keeps it in the hand's frame, so it rolls the
+   * hand about itself rather than about the world.
+   */
+  private unrollPalm(side: Side): void {
+    if (!this.options.correctHandDepthFlip) return;
+    if (!this.flipState[side].flipped) return;
+    setAxisAngle(this.qRoll, [1, 0, 0], Math.PI);
+    multiply(this.qPalm, this.qPalm, this.qRoll);
+  }
+
+  /** True while a hand's orientation is being corrected; shown in the panel. */
+  isDepthFlipped(side: Side): boolean {
+    return this.flipState[side].flipped;
+  }
+
+  private usePalmFrame(hand: HandInput | null): boolean {
     return this.options.useHandLandmarks && hand !== null;
   }
 

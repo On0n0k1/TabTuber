@@ -121,6 +121,29 @@ export function mirrorImagePoints(
 }
 
 /**
+ * Mirrors a hand's image-space landmarks. Image space is [0, 1], so
+ * reflecting is `1 - x` rather than a negation.
+ *
+ * No index remap: a hand's own topology has no left/right pairs. Which
+ * BUFFER is treated as which side is the caller's decision and must be
+ * swapped alongside the body, exactly as for the world landmarks.
+ */
+export function mirrorHandImage(
+  out: Float32Array,
+  image: Float32Array,
+  mirror: boolean,
+): void {
+  if (!mirror) {
+    out.set(image);
+    return;
+  }
+  for (let i = 0; i < out.length / 2; i++) {
+    out[i * 2] = 1 - (image[i * 2] ?? 0);
+    out[i * 2 + 1] = image[i * 2 + 1] ?? 0;
+  }
+}
+
+/**
  * Applies the same left/right swap to a per-landmark scalar array.
  *
  * Visibility must travel with its landmark. Without this, the solver would

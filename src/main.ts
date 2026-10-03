@@ -23,7 +23,6 @@ import {
   mirrorScalars,
   mpToThree,
 } from "./solver/coords.ts";
-import { palmConditioning } from "./solver/palmConditioning.ts";
 import { PoseSolver, type PostureMode } from "./solver/poseSolver.ts";
 import { BONE_INDEX, type HumanBoneName } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
@@ -31,12 +30,7 @@ import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
 import type { Tracker } from "./tracker/tracker.ts";
 import { TrackerHost } from "./tracker/trackerHost.ts";
-import {
-  createAvatarPose,
-  HAND_LANDMARK_COUNT,
-  LANDMARK_COUNT,
-  type HandFrame,
-} from "./types.ts";
+import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
@@ -60,30 +54,6 @@ const DEFAULT_POSTURE: PostureMode = "sitting";
  * propagates into the whole upper body. Provisional (SPEC.md 15).
  */
 const SITTING_HIP_CUTOFF_SCALE = 0.4;
-
-/**
- * How much harder the hands are smoothed when the palm turns edge-on
- * (SPEC.md 12).
- *
- * Bounds are in conditioning-ratio space, which is user-independent: roughly
- * 0.09 edge-on and 0.59 face-on for any hand at any distance (SPEC.md 12.1).
- * `floor` is a multiplier on the filter cutoff, so it carries no units either.
- */
-const HAND_CONDITIONING = {
-  enabled: true,
-  /** At or below this ratio the hand is as ill-presented as it gets. */
-  low: 0.12,
-  /** At or above this ratio no extra smoothing is applied. */
-  high: 0.45,
-  /** Cutoff multiplier at the low end; 0.25 is four times the smoothing. */
-  floor: 0.25,
-};
-
-function smoothstep(edge0: number, edge1: number, x: number): number {
-  if (edge1 <= edge0) return x >= edge1 ? 1 : 0;
-  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
-  return t * t * (3 - 2 * t);
-}
 
 function boot(): void {
   const canvas = document.querySelector<HTMLCanvasElement>("#stage");
@@ -169,10 +139,6 @@ function boot(): void {
   // a getBoundingClientRect inside the draw loop would thrash layout.
   let previewW = 0;
   let previewH = 0;
-  // x and y are normalised by different dimensions, so the conditioning
-  // measure needs the frame's aspect to compare them.
-  let cameraAspect = 4 / 3;
-  const conditioning = { left: 1, right: 1 };
 
   const renderFps = new FpsMeter();
   const cameraFps = new FpsMeter();
@@ -219,7 +185,6 @@ function boot(): void {
     const sourceRight = view.mirror ? frame.leftHand : frame.rightHand;
 
     if (sourceLeft?.present) {
-      conditioning.left = applyHandConditioning(handFilters.left, sourceLeft, cameraAspect);
       handFilters.left.apply(handFiltered.left, sourceLeft.world, frame.timestampMs);
       handToThree(leftHandPoints, handFiltered.left, view.mirror);
       handPoints.left = leftHandPoints;
@@ -230,7 +195,6 @@ function boot(): void {
       handPoints.left = null;
     }
     if (sourceRight?.present) {
-      conditioning.right = applyHandConditioning(handFilters.right, sourceRight, cameraAspect);
       handFilters.right.apply(handFiltered.right, sourceRight.world, frame.timestampMs);
       handToThree(rightHandPoints, handFiltered.right, view.mirror);
       handPoints.right = rightHandPoints;
@@ -259,13 +223,6 @@ function boot(): void {
   wireAvatar(avatarSlot, stage, banner, debugRig);
   wireSolverControls(panel, solver, view, stickFigure, debugRig, avatarSlot);
   wireFilterControls(panel, filter, handFilters);
-  // Visible because the whole point is that it varies with how you hold your
-  // hand; a number on screen makes that legible rather than inferred.
-  panel.addReadoutGroup(
-    "Hand conditioning",
-    ["left", "right"],
-    () => [conditioning.left, conditioning.right],
-  );
   wireMotionControls(panel, interpolator);
   wireLivelinessControls(panel, solver, blink);
   wireTrackingReadouts(panel, solver);
@@ -300,7 +257,6 @@ function boot(): void {
         break;
       case "ready":
         banner.hide();
-        cameraAspect = s.height > 0 ? s.width / s.height : 4 / 3;
         // Stale filter state from before the gap would otherwise be blended
         // into the first frames of the new stream.
         filter.reset();
@@ -551,44 +507,6 @@ function wireFilterControls(
   };
   folder.add(hands, "minCutoff", 0.1, 3, 0.05).name("hand xy: minCutoff").onChange(applyHands);
   folder.add(hands, "zMinCutoff", 0.05, 3, 0.05).name("hand z: minCutoff").onChange(applyHands);
-
-  // Bounds are conditioning ratios, not absolute units, so they mean the same
-  // thing for any hand at any distance (SPEC.md 12.1).
-  folder.add(HAND_CONDITIONING, "enabled").name("adapt to palm angle");
-  folder.add(HAND_CONDITIONING, "low", 0, 0.4, 0.01).name("cond: low");
-  folder.add(HAND_CONDITIONING, "high", 0.1, 0.8, 0.01).name("cond: high");
-  folder.add(HAND_CONDITIONING, "floor", 0.05, 1, 0.05).name("cond: floor");
-}
-
-/**
- * Smooths a hand harder the worse its palm is presented to the camera.
- *
- * When the palm turns edge-on its width collapses on screen, and width is
- * what determines roll -- so the roll information genuinely is not there, and
- * trading responsiveness for stability costs little real signal (SPEC.md 12).
- *
- * Returns the conditioning ratio so it can be displayed.
- */
-function applyHandConditioning(
-  filter: LandmarkFilter,
-  hand: HandFrame,
-  aspect: number,
-): number {
-  const ratio = palmConditioning(hand.image, aspect);
-  if (!HAND_CONDITIONING.enabled) {
-    filter.cutoffScale.fill(1);
-    filter.betaScale.fill(1);
-    return ratio;
-  }
-
-  const t = smoothstep(HAND_CONDITIONING.low, HAND_CONDITIONING.high, ratio);
-  const scale = HAND_CONDITIONING.floor + (1 - HAND_CONDITIONING.floor) * t;
-  filter.cutoffScale.fill(scale);
-  // beta matters more than minCutoff here: frame-to-frame noise looks like
-  // fast motion, so without damping beta the filter opens up to follow it and
-  // the minCutoff change is swamped.
-  filter.betaScale.fill(scale);
-  return ratio;
 }
 
 /** Hands get their own profile; see DEFAULT_HAND_XY_PARAMS for why. */

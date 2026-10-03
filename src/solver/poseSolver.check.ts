@@ -268,11 +268,23 @@ function makeHand(side: "left" | "right", wristX: number, wristY: number): Float
     h[i * 3] = x; h[i * 3 + 1] = y; h[i * 3 + 2] = z;
   };
   set(HAND.WRIST, wristX, wristY, 0);
-  // Knuckles span the palm: index on the thumb side, pinky opposite, for
-  // both hands. The slight stagger in reach is what a real hand has.
+  /*
+   * Knuckles span the palm: index on the thumb side, pinky opposite, for both
+   * hands, with the stagger in reach a real hand has.
+   *
+   * The middle knuckle sits ON the hand's forward axis, because that axis is
+   * how the solver defines forward and the VRM defines it the same way -- its
+   * own middle-proximal bone points along the hand. Placing it off-axis here
+   * would make "rest solves to identity" false by construction rather than
+   * because anything is wrong.
+   *
+   * Worth knowing: wrist-to-middle-knuckle and wrist-to-knuckle-centroid
+   * differ by about 6 degrees on the reference model, since the centroid is
+   * pulled toward the pinky. They are not interchangeable definitions.
+   */
   set(HAND.INDEX_MCP, wristX + 0.080 * s, wristY, 0.025);
-  set(HAND.MIDDLE_MCP, wristX + 0.085 * s, wristY, 0.008);
-  set(HAND.RING_MCP, wristX + 0.080 * s, wristY, -0.008);
+  set(HAND.MIDDLE_MCP, wristX + 0.085 * s, wristY, 0);
+  set(HAND.RING_MCP, wristX + 0.080 * s, wristY, -0.012);
   set(HAND.PINKY_MCP, wristX + 0.072 * s, wristY, -0.025);
   return h;
 }

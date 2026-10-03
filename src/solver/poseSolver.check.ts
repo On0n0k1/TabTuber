@@ -254,28 +254,49 @@ check("mirrored: the bend moves to the right", mirroredRight > 10 && mirroredLef
 check("mirrored: the bend keeps its magnitude", Math.abs(mirroredRight - unmirroredLeft) < 0.5,
   `${unmirroredLeft.toFixed(2)} vs ${mirroredRight.toFixed(2)}`);
 
-// --- 5b. Palm frame: hand orientation from 21 landmarks --------------------
-//
-// Only differences matter, so these are written in body-relative coordinates
-// even though Holistic centres hand world landmarks on the hand itself.
-
-/** A palm-down hand in T-pose: fingers along the arm, thumb forward (+Z). */
-function restHand(side: "left" | "right"): Float32Array {
+/**
+ * A palm-down hand in T-pose: fingers along the arm, thumb side toward +Z.
+ *
+ * All five rigid palm landmarks are set, including the ring knuckle. Earlier
+ * fixtures set only four and left the fifth at the origin, which went
+ * unnoticed while the solver read three of them.
+ */
+function makeHand(side: "left" | "right", wristX: number, wristY: number): Float32Array {
   const h = new Float32Array(HAND_LANDMARK_COUNT * 3);
   const s = side === "left" ? 1 : -1;
   const set = (i: number, x: number, y: number, z: number): void => {
     h[i * 3] = x; h[i * 3 + 1] = y; h[i * 3 + 2] = z;
   };
-  set(HAND.WRIST, 0.65 * s, 1.4, 0);
-  set(HAND.MIDDLE_MCP, 0.73 * s, 1.4, 0);
-  // Index sits on the thumb side (+Z), pinky opposite, for BOTH hands.
-  set(HAND.INDEX_MCP, 0.73 * s, 1.4, 0.02);
-  set(HAND.PINKY_MCP, 0.73 * s, 1.4, -0.02);
+  set(HAND.WRIST, wristX, wristY, 0);
+  // Knuckles span the palm: index on the thumb side, pinky opposite, for
+  // both hands. The slight stagger in reach is what a real hand has.
+  set(HAND.INDEX_MCP, wristX + 0.080 * s, wristY, 0.025);
+  set(HAND.MIDDLE_MCP, wristX + 0.085 * s, wristY, 0.008);
+  set(HAND.RING_MCP, wristX + 0.080 * s, wristY, -0.008);
+  set(HAND.PINKY_MCP, wristX + 0.072 * s, wristY, -0.025);
   return h;
 }
 
+/** Rotates a hand about its wrist. */
+function rotateHand(h: Float32Array, q: Readonly<Q4>, px: number, py: number): Float32Array {
+  const out = new Float32Array(h.length);
+  const t = v3();
+  for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
+    rotateV3(t, q, [(h[i * 3] ?? 0) - px, (h[i * 3 + 1] ?? 0) - py, h[i * 3 + 2] ?? 0]);
+    out[i * 3] = t[0] + px;
+    out[i * 3 + 1] = t[1] + py;
+    out[i * 3 + 2] = t[2];
+  }
+  return out;
+}
+
+// --- 5b. Palm frame: hand orientation from 21 landmarks --------------------
+//
+// Only differences matter, so these are written in body-relative coordinates
+// even though Holistic centres hand world landmarks on the hand itself.
+
 {
-  const hands = { left: restHand("left"), right: restHand("right") };
+  const hands = { left: makeHand("left", 0.65, 1.4), right: makeHand("right", -0.65, 1.4) };
   const s = makeSolver();
   s.solve(rest, visible, pose, 0, hands);
 
@@ -297,15 +318,8 @@ function restHand(side: "left" | "right"): Float32Array {
 {
   const roll = quat();
   setAxisAngle(roll, [1, 0, 0], (40 * Math.PI) / 180);
-  const h = restHand("left");
-  const out = v3();
-  for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
-    // Rotate about the arm axis, pivoting at the wrist.
-    rotateV3(out, roll, [(h[i * 3] ?? 0) - 0.65, (h[i * 3 + 1] ?? 0) - 1.4, h[i * 3 + 2] ?? 0]);
-    h[i * 3] = out[0] + 0.65;
-    h[i * 3 + 1] = out[1] + 1.4;
-    h[i * 3 + 2] = out[2];
-  }
+  // Rotated about the arm axis, pivoting at the wrist.
+  const h = rotateHand(makeHand("left", 0.65, 1.4), roll, 0.65, 1.4);
 
   const s = makeSolver();
   s.solve(rest, visible, pose, 0, { left: h, right: null });
@@ -324,7 +338,7 @@ function restHand(side: "left" | "right"): Float32Array {
 
   const off = makeSolver();
   off.options.useHandLandmarks = false;
-  off.solve(rest, visible, pose, 0, { left: restHand("left"), right: restHand("right") });
+  off.solve(rest, visible, pose, 0, { left: makeHand("left", 0.65, 1.4), right: makeHand("right", -0.65, 1.4) });
   check("palm frame: can be disabled for comparison",
     isIdentity(boneQuat(pose.rotations, "leftHand"), 1e-3));
 }
@@ -631,26 +645,9 @@ check("gated: confidence drops below 1", pose.confidence < 1);
 
   /** A palm-down hand, rotated about `axis` by `degrees` around the wrist. */
   const posedHand = (axis: V3, degrees: number): Float32Array => {
-    const h = new Float32Array(HAND_LANDMARK_COUNT * 3);
-    const set = (i: number, x: number, y: number, z: number): void => {
-      h[i * 3] = x; h[i * 3 + 1] = y; h[i * 3 + 2] = z;
-    };
-    set(HAND.WRIST, 0.65, 1.4, 0);
-    set(HAND.MIDDLE_MCP, 0.73, 1.4, 0);
-    set(HAND.INDEX_MCP, 0.73, 1.4, 0.02);
-    set(HAND.PINKY_MCP, 0.73, 1.4, -0.02);
-
     const q = quat();
     setAxisAngle(q, axis, (degrees * Math.PI) / 180);
-    const out = new Float32Array(h.length);
-    const t = v3();
-    for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
-      rotateV3(t, q, [(h[i * 3] ?? 0) - 0.65, (h[i * 3 + 1] ?? 0) - 1.4, h[i * 3 + 2] ?? 0]);
-      out[i * 3] = t[0] + 0.65;
-      out[i * 3 + 1] = t[1] + 1.4;
-      out[i * 3 + 2] = t[2];
-    }
-    return out;
+    return rotateHand(makeHand("left", 0.65, 1.4), q, 0.65, 1.4);
   };
 
   /** Deterministic sub-millimetre perturbation. */
@@ -727,26 +724,9 @@ check("gated: confidence drops below 1", pose.confidence < 1);
   const full = new Float32Array(LANDMARK_COUNT).fill(1);
 
   const palmDownHand = (pitchDegrees: number): Float32Array => {
-    const h = new Float32Array(HAND_LANDMARK_COUNT * 3);
-    const set = (i: number, x: number, y: number, z: number): void => {
-      h[i * 3] = x; h[i * 3 + 1] = y; h[i * 3 + 2] = z;
-    };
-    set(HAND.WRIST, 0.65, 1.4, 0);
-    set(HAND.MIDDLE_MCP, 0.73, 1.4, 0);
-    set(HAND.INDEX_MCP, 0.73, 1.4, 0.02);
-    set(HAND.PINKY_MCP, 0.73, 1.4, -0.02);
-
     const q = quat();
     setAxisAngle(q, [0, 0, 1], (pitchDegrees * Math.PI) / 180);
-    const out = new Float32Array(h.length);
-    const t = v3();
-    for (let i = 0; i < HAND_LANDMARK_COUNT; i++) {
-      rotateV3(t, q, [(h[i * 3] ?? 0) - 0.65, (h[i * 3 + 1] ?? 0) - 1.4, h[i * 3 + 2] ?? 0]);
-      out[i * 3] = t[0] + 0.65;
-      out[i * 3 + 1] = t[1] + 1.4;
-      out[i * 3 + 2] = t[2];
-    }
-    return out;
+    return rotateHand(makeHand("left", 0.65, 1.4), q, 0.65, 1.4);
   };
 
   /** Depth noise is roughly five times the lateral noise in practice. */

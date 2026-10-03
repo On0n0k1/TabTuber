@@ -32,17 +32,34 @@ export const HAND = {
 } as const;
 
 /**
- * Points defining the palm frame.
+ * The rigid palm landmarks, in winding order around the palm.
  *
- * Wrist to middle knuckle is the hand's long axis, and index-to-pinky knuckle
- * spans the palm. Those two are close to perpendicular and both span most of
- * the hand, so the cross product is well conditioned -- unlike the pose
- * model's index and pinky knuckles, which sit about 30 degrees apart and
- * produce a normal dominated by noise (SPEC.md 5.6).
+ * Rigid is the operative word: these five keep fixed positions relative to
+ * each other whatever the fingers do. Middle joints and fingertips move with
+ * finger curl, so including them would measure finger pose rather than palm
+ * pose.
+ *
+ * Order matters -- it traces the outline of the palm, which is what makes an
+ * area-weighted plane fit over consecutive pairs meaningful.
  */
-export const PALM = {
-  ORIGIN: HAND.WRIST,
-  FORWARD: HAND.MIDDLE_MCP,
-  INDEX_SIDE: HAND.INDEX_MCP,
-  PINKY_SIDE: HAND.PINKY_MCP,
-} as const;
+export const PALM_RIM: readonly number[] = [
+  HAND.WRIST,
+  HAND.INDEX_MCP,
+  HAND.MIDDLE_MCP,
+  HAND.RING_MCP,
+  HAND.PINKY_MCP,
+];
+
+/**
+ * Knuckles only, averaged to give the hand's forward direction.
+ *
+ * Averaging four knuckles rather than taking the middle one alone costs
+ * nothing and halves the noise on the one vector with any real length
+ * (SPEC.md 5.6.1).
+ */
+export const PALM_KNUCKLES: readonly number[] = [
+  HAND.INDEX_MCP,
+  HAND.MIDDLE_MCP,
+  HAND.RING_MCP,
+  HAND.PINKY_MCP,
+];

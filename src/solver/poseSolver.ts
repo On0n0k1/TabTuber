@@ -15,7 +15,7 @@
  * (SPEC.md section 2).
  */
 
-import { PALM } from "../tracker/handLandmarks.ts";
+import { PALM_KNUCKLES, PALM_RIM } from "../tracker/handLandmarks.ts";
 import { LM, SOLVER_LANDMARKS, STANDING_LANDMARKS } from "../tracker/landmarks.ts";
 import {
   BONE_INDEX,
@@ -270,7 +270,6 @@ export class PoseSolver {
   private readonly pc = v3();
   private readonly sa = v3();
   private readonly sb = v3();
-  private readonly sc = v3();
   private readonly palmX = v3();
   private readonly palmY = v3();
   private readonly palmZ = v3();
@@ -679,36 +678,63 @@ export class PoseSolver {
   }
 
   /**
-   * Full hand orientation from the 21-point palm.
+   * Full hand orientation, fitted to the five rigid palm landmarks.
    *
-   * Wrist to middle knuckle is the hand's long axis and index-to-pinky
-   * knuckle spans the palm. Those are close to perpendicular and both span
-   * most of the hand, so the basis is well conditioned -- unlike the pose
-   * model's index and pinky knuckles, which sit about 30 degrees apart and
-   * yield a normal dominated by noise (SPEC.md 5.6).
+   * The normal comes from an area-weighted fit over the palm outline
+   * (Newell's method) rather than a single cross product of two edges. Every
+   * rim point contributes in proportion to the area it spans, so landmark
+   * noise averages down instead of landing directly on the result. The
+   * forward direction likewise averages the four knuckles rather than reading
+   * the middle one alone.
+   *
+   * This is a redundancy gain, not a geometric one: the extra knuckles sit
+   * between the ones already used and extend no span, so it is worth roughly
+   * the square root of the point count and nothing more. Span, and
+   * particularly span as projected on screen, is what actually governs
+   * precision here (SPEC.md 5.6.1).
    *
    * Writes `qPalm` and returns false if the landmarks are degenerate.
    */
   private solvePalm(hand: Float32Array, side: Side): boolean {
-    readPoint(this.pa, hand, PALM.ORIGIN);
-    readPoint(this.pb, hand, PALM.FORWARD);
-    readPoint(this.sa, hand, PALM.INDEX_SIDE);
-    readPoint(this.sb, hand, PALM.PINKY_SIDE);
+    // Forward: wrist to the centroid of the knuckles.
+    readPoint(this.pa, hand, PALM_RIM[0] as number);
+    this.sa[0] = 0;
+    this.sa[1] = 0;
+    this.sa[2] = 0;
+    for (const i of PALM_KNUCKLES) {
+      readPoint(this.pb, hand, i);
+      this.sa[0] += this.pb[0];
+      this.sa[1] += this.pb[1];
+      this.sa[2] += this.pb[2];
+    }
+    const n = PALM_KNUCKLES.length;
+    this.sa[0] /= n;
+    this.sa[1] /= n;
+    this.sa[2] /= n;
 
-    sub(this.palmX, this.pb, this.pa);
-    sub(this.sc, this.sb, this.sa);
-    if (vectorLength(this.palmX) < 1e-5 || vectorLength(this.sc) < 1e-5) return false;
-
-    const sign = HAND_SIGN[side];
+    sub(this.palmX, this.sa, this.pa);
+    if (vectorLength(this.palmX) < 1e-5) return false;
     normalize(this.palmX, this.palmX);
-    normalize(this.sc, this.sc);
 
-    // up = forward x across, with the per-side flip that keeps both hands
-    // right-handed; the hands are mirror images of each other.
-    cross(this.palmY, this.palmX, this.sc);
-    if (vectorLength(this.palmY) < 1e-4) return false;
+    // Normal: Newell's method around the palm outline. Each consecutive pair
+    // contributes its own twice-area, so the result is the area-weighted
+    // average of every edge cross product rather than one arbitrary pair.
+    this.palmY[0] = 0;
+    this.palmY[1] = 0;
+    this.palmY[2] = 0;
+    for (let k = 0; k < PALM_RIM.length; k++) {
+      readPoint(this.pb, hand, PALM_RIM[k] as number);
+      readPoint(this.pc, hand, PALM_RIM[(k + 1) % PALM_RIM.length] as number);
+      this.palmY[0] += (this.pb[1] - this.pc[1]) * (this.pb[2] + this.pc[2]);
+      this.palmY[1] += (this.pb[2] - this.pc[2]) * (this.pb[0] + this.pc[0]);
+      this.palmY[2] += (this.pb[0] - this.pc[0]) * (this.pb[1] + this.pc[1]);
+    }
+    if (vectorLength(this.palmY) < 1e-8) return false;
     normalize(this.palmY, this.palmY);
 
+    // The hands are mirror images, so one side's frame comes out left-handed
+    // without this flip.
+    const sign = HAND_SIGN[side];
     this.palmX[0] *= sign;
     this.palmX[1] *= sign;
     this.palmX[2] *= sign;
@@ -716,7 +742,8 @@ export class PoseSolver {
     this.palmY[1] *= sign;
     this.palmY[2] *= sign;
 
-    // Re-orthogonalise: landmark-derived axes never are exactly.
+    // Re-orthogonalise: a fitted normal and a measured forward are never
+    // exactly perpendicular.
     normalize(this.palmZ, cross(this.palmZ, this.palmX, this.palmY));
     normalize(this.palmY, cross(this.palmY, this.palmZ, this.palmX));
 

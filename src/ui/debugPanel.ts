@@ -27,7 +27,6 @@ interface Readouts {
   delegate: string;
   backend: string;
   mic: string;
-  vad: string;
   confidence: string;
 }
 
@@ -44,7 +43,6 @@ export interface DebugPanelOptions {
     delegate: string;
     backend: string;
     mic: string;
-    vad: string;
     confidence: number;
   };
 }
@@ -74,7 +72,6 @@ export class DebugPanel {
     delegate: "-",
     backend: "-",
     mic: "off",
-    vad: "off",
     confidence: "-",
   };
 
@@ -170,7 +167,6 @@ export class DebugPanel {
     // permission grants it without prompting, so the absence of a prompt says
     // nothing about whether the microphone is running.
     this.readouts.mic = s.mic;
-    this.readouts.vad = s.vad;
     this.readouts.confidence = s.confidence > 0 ? s.confidence.toFixed(2) : "-";
 
     for (const group of this.readoutGroups) {

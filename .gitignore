@@ -30,4 +30,3 @@ npm-debug.log*
 # MediaPipe runtime assets, staged by scripts/fetch-assets.mjs
 public/mediapipe/
 public/models/
-public/vad/

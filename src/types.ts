@@ -44,6 +44,17 @@ export interface HandFrame {
 }
 
 /**
+ * Face blendshapes, when the backend produces them.
+ *
+ * Indexed by ARKIT_BLENDSHAPES, so position means the same thing every frame
+ * regardless of the order the model happens to report them in.
+ */
+export interface FaceFrame {
+  readonly scores: Float32Array;
+  readonly present: boolean;
+}
+
+/**
  * One tracking result.
  *
  * `world` is metric (metres) with the origin at the hip midpoint, and is what
@@ -67,6 +78,8 @@ export interface PoseFrame {
    */
   readonly leftHand: HandFrame | null;
   readonly rightHand: HandFrame | null;
+  /** Null when the backend does not produce blendshapes at all. */
+  readonly face: FaceFrame | null;
 }
 
 /**

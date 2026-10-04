@@ -37,12 +37,15 @@ import {
   mirrorScalars,
   mpToThree,
 } from "./solver/coords.ts";
+import { FaceSolver } from "./solver/faceSolver.ts";
 import {
   PoseSolver,
   type HandInput,
   type PostureMode,
 } from "./solver/poseSolver.ts";
-import { BONE_INDEX, type HumanBoneName } from "./types.ts";
+import { BONE_INDEX, type HumanBoneName,
+  type FaceFrame,
+} from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
 import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
 import { PoseTracker } from "./tracker/poseTracker.ts";
@@ -125,6 +128,7 @@ function boot(): void {
   const blink = new Blink();
   const mic = new MicLevel();
   const mouth = new Mouth();
+  const faceSolver = new FaceSolver();
   const calibrator = new VowelCalibrator();
   let calibration: VowelCalibration | null = readJson("vowels", validateCalibration);
   let vowelRefs = calibration ? referencePoints(calibration) : null;
@@ -211,7 +215,13 @@ function boot(): void {
     }),
   });
 
+  // Held from the tracker callback so the render loop can read it: face
+  // expressions are generated at render rate like blink, not carried through
+  // the solver, which only deals in bone rotations.
+  let latestFace: FaceFrame | null = null;
+
   host.onFrame((frame) => {
+    latestFace = frame.face;
     trackerFps.tick();
     if (previewW > 0) overlay.draw(frame, previewW, previewH);
 
@@ -280,6 +290,7 @@ function boot(): void {
   wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
+  wireFaceControls(panel, faceSolver);
   wireLipSync(panel, banner, mic, mouth, calibrator, () => {
     calibration = null;
     vowelRefs = null;
@@ -379,7 +390,19 @@ function boot(): void {
 
     // Written after step(), which copies expressions from the target: these
     // are generated here at render rate, not carried from the solver.
-    interpolator.current.expressions.set(BLINK_EXPRESSION, blink.update(dt));
+    // Face first, so a tracked blink is in place before the procedural one
+    // would overwrite it.
+    const face = latestFace;
+    if (face?.present) {
+      faceSolver.update(face.scores, view.mirror, dt, interpolator.current.expressions);
+      avatarSlot.setGaze(faceSolver.gaze.yaw, faceSolver.gaze.pitch);
+    }
+
+    // The timer remains the fallback whenever the camera is not supplying
+    // blinks: a frozen stare reads worse than a wrong blink rate.
+    if (!faceSolver.drivingBlink || !face?.present) {
+      interpolator.current.expressions.set(BLINK_EXPRESSION, blink.update(dt));
+    }
 
     // Energy is read at the moment the body is rendering, not the newest
     // sample, so the mouth does not lead a body delayed by the lookahead
@@ -809,6 +832,21 @@ function wireLipSync(
     mic.current,
     mic.speaking ? 1 : 0,
   ], 3);
+}
+
+/**
+ * Blink and gaze are measurements; emotion is a guess (SPEC.md 13), so they
+ * are separate switches rather than one.
+ */
+function wireFaceControls(panel: DebugPanel, face: FaceSolver): void {
+  const folder = panel.folder("Face");
+  folder.add(face.params, "enabled");
+  folder.add(face.params, "trackBlink").name("blink from camera");
+  folder.add(face.params, "trackGaze").name("gaze from camera");
+  folder.add(face.params, "gazeRange", 0, 40, 1).name("gaze range (deg)");
+  folder.add(face.params, "inferEmotion").name("infer emotion");
+  folder.add(face.params, "emotionFloor", 0, 1, 0.05).name("emotion floor");
+  folder.add(face.params, "emotionSmoothing", 0, 1.5, 0.05).name("emotion smoothing (s)");
 }
 
 function wireMotionControls(

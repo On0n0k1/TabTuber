@@ -94,6 +94,10 @@ export class AvatarSlot {
     this.current?.apply(pose);
   }
 
+  setGaze(yawDegrees: number, pitchDegrees: number): void {
+    this.current?.setGaze(yawDegrees, pitchDegrees);
+  }
+
   update(dt: number): void {
     this.current?.update(dt);
   }

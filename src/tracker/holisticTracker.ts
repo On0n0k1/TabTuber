@@ -19,8 +19,13 @@ import {
   type NormalizedLandmark,
 } from "@mediapipe/tasks-vision";
 import {
+  BLENDSHAPE_COUNT,
+  BLENDSHAPE_INDEX,
+} from "./faceBlendshapes.ts";
+import {
   HAND_LANDMARK_COUNT,
   LANDMARK_COUNT,
+  type FaceFrame,
   type HandFrame,
   type PoseFrame,
 } from "../types.ts";
@@ -50,6 +55,9 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
   private readonly world = new Float32Array(LANDMARK_COUNT * 3);
   private readonly image = new Float32Array(LANDMARK_COUNT * 3);
   private readonly visibility = new Float32Array(LANDMARK_COUNT);
+  private readonly faceScores = new Float32Array(BLENDSHAPE_COUNT);
+  private facePresent = false;
+
   private readonly left: HandBuffer = {
     world: new Float32Array(HAND_LANDMARK_COUNT * 3),
     image: new Float32Array(HAND_LANDMARK_COUNT * 2),
@@ -74,9 +82,9 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
       minPoseDetectionConfidence: this.options.minPoseDetectionConfidence ?? 0.6,
       minPosePresenceConfidence: this.options.minPosePresenceConfidence ?? 0.6,
       minHandLandmarksConfidence: this.options.minHandLandmarksConfidence ?? 0.5,
-      // Off while face tracking is deferred. Face landmarks are produced
-      // regardless; only the blendshape classifier is optional.
-      outputFaceBlendshapes: false,
+      // The face graph runs regardless; this adds the blendshape classifier
+      // on top, which is the part that costs extra (SPEC.md 13).
+      outputFaceBlendshapes: true,
       outputPoseSegmentationMasks: false,
     });
   }
@@ -109,6 +117,8 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
       this.visibility[i] = p.visibility ?? 1;
     }
 
+    this.fillFace(result.faceBlendshapes[0]);
+
     fillHand(this.left, result.leftHandWorldLandmarks[0], result.leftHandLandmarks[0]);
     fillHand(this.right, result.rightHandWorldLandmarks[0], result.rightHandLandmarks[0]);
 
@@ -119,7 +129,28 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
       timestampMs,
       leftHand: this.left as HandFrame,
       rightHand: this.right as HandFrame,
+      face: { scores: this.faceScores, present: this.facePresent } as FaceFrame,
     };
+  }
+
+  /**
+   * Scatters the reported categories into a fixed layout.
+   *
+   * Matched by name rather than by position: the order is documented but
+   * relying on it would make a silent total misattribution the failure mode
+   * of any upstream change.
+   */
+  private fillFace(classification: { categories: { categoryName: string; score: number }[] } | undefined): void {
+    if (!classification || classification.categories.length === 0) {
+      this.facePresent = false;
+      return;
+    }
+    this.faceScores.fill(0);
+    for (const c of classification.categories) {
+      const i = BLENDSHAPE_INDEX[c.categoryName];
+      if (i !== undefined) this.faceScores[i] = c.score;
+    }
+    this.facePresent = true;
   }
 }
 

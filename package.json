@@ -14,13 +14,14 @@
     "fetch-assets": "node scripts/fetch-assets.mjs",
     "check:math": "node --experimental-strip-types src/solver/math.check.ts",
     "check:solver": "node --experimental-strip-types src/solver/poseSolver.check.ts",
-    "check": "npm run check:math && npm run check:solver && npm run check:filter && npm run check:buffer && npm run check:mouth && npm run check:gate && npm run check:vowel",
+    "check": "npm run check:math && npm run check:solver && npm run check:filter && npm run check:buffer && npm run check:mouth && npm run check:gate && npm run check:vowel && npm run check:face",
     "check:filter": "node --experimental-strip-types src/filter/oneEuro.check.ts",
     "inspect-vrm": "node scripts/inspect-vrm.mjs",
     "check:buffer": "node --experimental-strip-types src/render/poseBuffer.check.ts",
     "check:mouth": "node --experimental-strip-types src/audio/mouth.check.ts",
     "check:gate": "node --experimental-strip-types src/audio/speechGate.check.ts",
-    "check:vowel": "node --experimental-strip-types src/audio/vowelSpace.check.ts"
+    "check:vowel": "node --experimental-strip-types src/audio/vowelSpace.check.ts",
+    "check:face": "node --experimental-strip-types src/solver/faceSolver.check.ts"
   },
   "devDependencies": {
     "@types/three": "^0.186.0",

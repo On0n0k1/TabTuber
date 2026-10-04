@@ -86,9 +86,10 @@ export class PoseTracker extends VideoTracker<PoseLandmarker> {
       image: this.image,
       visibility: this.visibility,
       timestampMs,
-      // Null rather than an absent hand: this backend never looks.
+      // Null rather than absent: this backend never looks for either.
       leftHand: null,
       rightHand: null,
+      face: null,
     };
   }
 }

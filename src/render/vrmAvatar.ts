@@ -204,6 +204,24 @@ export class VrmAvatar {
   }
 
   /**
+   * Aims the eyes, in degrees.
+   *
+   * Through lookAt rather than the eye bones directly: the model declares
+   * bone-based look-at, and its applier already knows the per-model limits on
+   * how far an eye may turn. Writing the bones by hand would discard that.
+   *
+   * autoUpdate is disabled because it is for following a target object in the
+   * scene; here the angles come from the camera.
+   */
+  setGaze(yawDegrees: number, pitchDegrees: number): void {
+    const lookAt = this.vrm.lookAt;
+    if (!lookAt) return;
+    lookAt.autoUpdate = false;
+    lookAt.yaw = yawDegrees;
+    lookAt.pitch = pitchDegrees;
+  }
+
+  /**
    * Drives spring bones, constraints and look-at, and copies the normalised
    * pose onto the raw rig. Call once per rendered frame, after apply().
    */

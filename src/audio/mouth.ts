@@ -23,7 +23,13 @@
 export const VISEMES = ["aa", "ih", "ou", "ee", "oh"] as const;
 export type Viseme = (typeof VISEMES)[number];
 
-export type MouthMode = "amplitude" | "animated";
+/**
+ * `vowel` blends the five visemes by where the voice sits in the speaker's
+ * own calibrated vowel space (SPEC.md 8.1). It falls back to `animated` when
+ * no calibration exists, since without one there is no space to place
+ * anything in.
+ */
+export type MouthMode = "amplitude" | "animated" | "vowel";
 
 export interface MouthParams {
   mode: MouthMode;
@@ -88,8 +94,19 @@ export class Mouth {
     return "aa";
   }
 
-  /** Advances the cycle and writes viseme weights into `out`. */
-  update(energy: number, dt: number, out: Map<string, number>): void {
+  /**
+   * Advances the cycle and writes viseme weights into `out`.
+   *
+   * `vowelWeights`, when supplied, holds the calibrated blend for the current
+   * frame; `vowel` mode scales it by the envelope and uses it in place of the
+   * cycle. Without it, `vowel` behaves as `animated`.
+   */
+  update(
+    energy: number,
+    dt: number,
+    out: Map<string, number>,
+    vowelWeights?: ReadonlyMap<string, number> | null,
+  ): void {
     for (const v of VISEMES) out.set(v, 0);
 
     const open = Math.min(1, energy) * this.params.openness;
@@ -102,6 +119,14 @@ export class Mouth {
 
     if (this.params.mode === "amplitude") {
       out.set("aa", open);
+      return;
+    }
+
+    if (this.params.mode === "vowel" && vowelWeights) {
+      // Weights already sum to 1, so scaling by the envelope keeps the mouth
+      // from opening wider than the voice is loud -- the same invariant the
+      // crossfade below maintains.
+      for (const v of VISEMES) out.set(v, (vowelWeights.get(v) ?? 0) * open);
       return;
     }
 

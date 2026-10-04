@@ -13,6 +13,12 @@
  */
 
 import { SpeechGate } from "./speechGate.ts";
+import {
+  bandCentroid,
+  F1_BAND,
+  F2_BAND,
+  type VowelPoint,
+} from "./vowelSpace.ts";
 
 /** Seconds of history kept, so the mouth can be aligned to a delayed body. */
 const HISTORY_SECONDS = 0.5;
@@ -95,6 +101,9 @@ export class MicLevel {
   // Typed as backed by ArrayBuffer specifically: getFloatTimeDomainData
   // rejects a possibly-shared buffer.
   private samples = new Float32Array(new ArrayBuffer(0));
+  private spectrum = new Float32Array(new ArrayBuffer(0));
+  /** Band centroids tracking the two formants; see vowelSpace. */
+  private readonly vowel: VowelPoint = { f1: 500, f2: 1500 };
 
   private state: MicState = { kind: "off" };
   private readonly listeners = new Set<(s: MicState) => void>();
@@ -124,6 +133,11 @@ export class MicLevel {
 
   get noiseFloor(): number {
     return this.floor;
+  }
+
+  /** The current point in vowel space. Only meaningful while speaking. */
+  get vowelPoint(): Readonly<VowelPoint> {
+    return this.vowel;
   }
 
   get speaking(): boolean {
@@ -180,10 +194,14 @@ export class MicLevel {
     this.analyser = this.context.createAnalyser();
     // Small window: speech envelope changes far faster than a large FFT would
     // resolve, and only amplitude is needed.
-    this.analyser.fftSize = 1024;
+    // 2048 rather than 1024 for the vowel bands: at ~47Hz per bin, `ou` at
+    // 300Hz and `ih` at 530Hz sit only five bins apart (SPEC.md 8.1). The RMS
+    // path is unaffected, reading the time domain.
+    this.analyser.fftSize = 2048;
     this.analyser.smoothingTimeConstant = 0;
     source.connect(this.analyser);
     this.samples = new Float32Array(new ArrayBuffer(this.analyser.fftSize * 4));
+    this.spectrum = new Float32Array(new ArrayBuffer(this.analyser.frequencyBinCount * 4));
 
     console.info(
       `mic: running at ${this.context.sampleRate} Hz` +
@@ -256,6 +274,16 @@ export class MicLevel {
 
     const tau = target > this.energy ? this.params.attack : this.params.release;
     this.energy += (target - this.energy) * approach(dt, tau);
+
+    // Spectrum is only read when there is something to measure: during
+    // silence the centroids would track room tone rather than a vowel.
+    if (this.energy > 0.02) {
+      this.analyser.getFloatFrequencyData(this.spectrum);
+      const rate = this.context?.sampleRate ?? 48000;
+      const size = this.analyser.fftSize;
+      this.vowel.f1 = bandCentroid(this.spectrum, rate, size, F1_BAND.lo, F1_BAND.hi);
+      this.vowel.f2 = bandCentroid(this.spectrum, rate, size, F2_BAND.lo, F2_BAND.hi);
+    }
 
     this.historyTime.push(timestampMs);
     this.historyEnergy.push(this.energy);

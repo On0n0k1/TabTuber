@@ -7,6 +7,16 @@
 
 import { MicLevel } from "./audio/micLevel.ts";
 import { Mouth } from "./audio/mouth.ts";
+import {
+  CALIBRATION_STEPS,
+  STEP_PROMPTS,
+  VowelCalibrator,
+} from "./audio/vowelCalibration.ts";
+import {
+  blendVisemes,
+  referencePoints,
+  type VowelCalibration,
+} from "./audio/vowelSpace.ts";
 import { Camera } from "./capture/camera.ts";
 import {
   DEFAULT_HAND_XY_PARAMS,
@@ -42,7 +52,7 @@ import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.t
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
-import { readSetting, writeSetting } from "./ui/settings.ts";
+import { clearSetting, readJson, readSetting, writeJson, writeSetting } from "./ui/settings.ts";
 import { StatusBanner } from "./ui/statusBanner.ts";
 
 type BackendName = "holistic" | "pose";
@@ -108,6 +118,10 @@ function boot(): void {
   const blink = new Blink();
   const mic = new MicLevel();
   const mouth = new Mouth();
+  const calibrator = new VowelCalibrator();
+  let calibration: VowelCalibration | null = readJson("vowels", validateCalibration);
+  let vowelRefs = calibration ? referencePoints(calibration) : null;
+  const vowelWeights = new Map<string, number>();
   let micState = "off";
   mic.onState((s) => {
     micState = s.kind === "error" ? `error: ${s.message}` : s.kind;
@@ -259,7 +273,11 @@ function boot(): void {
   wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
-  wireLipSync(panel, banner, mic, mouth);
+  wireLipSync(panel, banner, mic, mouth, calibrator, () => {
+    calibration = null;
+    vowelRefs = null;
+    console.info("vowels: calibration forgotten");
+  });
   wireTrackingReadouts(panel, solver);
   // Visible so a correction is something you can see happening rather than
   // infer from the avatar looking right.
@@ -345,11 +363,30 @@ function boot(): void {
     // sample, so the mouth does not lead a body delayed by the lookahead
     // buffer (SPEC.md 6.1).
     mic.update(dt, performance.now());
+
+    // Calibration consumes frames rather than the mouth, so the avatar holds
+    // still while the speaker is holding a vowel for the microphone.
+    const finished = calibrator.update(mic.vowelPoint, mic.speaking, dt);
+    if (finished) {
+      calibration = finished;
+      vowelRefs = referencePoints(finished);
+      writeJson("vowels", finished);
+      banner.hide();
+      console.info("vowels: calibrated", finished);
+    }
+
+    if (vowelRefs && mouth.params.mode === "vowel") {
+      blendVisemes(mic.vowelPoint, vowelRefs, vowelWeights);
+    }
+
     mouth.update(
       mic.sampleAt(interpolator.current.timestampMs),
       dt,
       interpolator.current.expressions,
+      vowelRefs ? vowelWeights : null,
     );
+
+    if (calibrator.running) banner.show("info", calibrationMessage(calibrator));
 
     debugRig.apply(interpolator.current);
 
@@ -645,6 +682,38 @@ function wireLivelinessControls(
 }
 
 /**
+ * Guards a stored calibration before it is trusted.
+ *
+ * Stored values outlive the code that wrote them, and a malformed one would
+ * otherwise reach the blend as NaN and silently stop the mouth moving at all.
+ */
+function validateCalibration(raw: unknown): VowelCalibration | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  const corner = (key: string): { f1: number; f2: number } | null => {
+    const v = record[key];
+    if (typeof v !== "object" || v === null) return null;
+    const { f1, f2 } = v as Record<string, unknown>;
+    if (typeof f1 !== "number" || typeof f2 !== "number") return null;
+    if (!Number.isFinite(f1) || !Number.isFinite(f2)) return null;
+    return { f1, f2 };
+  };
+  const aa = corner("aa");
+  const ee = corner("ee");
+  const ou = corner("ou");
+  return aa && ee && ou ? { aa, ee, ou } : null;
+}
+
+/** What the banner says while a vowel is being held. */
+function calibrationMessage(calibrator: VowelCalibrator): string {
+  const state = calibrator.state;
+  if (state.kind !== "capturing") return "";
+  const index = CALIBRATION_STEPS.indexOf(state.step) + 1;
+  const bar = "#".repeat(Math.round(state.progress * 10)).padEnd(10, ".");
+  return `Calibrating ${index}/${CALIBRATION_STEPS.length} — ${STEP_PROMPTS[state.step]}  [${bar}]`;
+}
+
+/**
  * Lip sync is opt-in and remembered.
  *
  * Browsers refuse to start an AudioContext outside a user gesture, so this
@@ -657,6 +726,8 @@ function wireLipSync(
   banner: StatusBanner,
   mic: MicLevel,
   mouth: Mouth,
+  calibrator: VowelCalibrator,
+  onForget: () => void,
 ): void {
   const folder = panel.folder("Lip sync");
 
@@ -683,8 +754,19 @@ function wireLipSync(
     processing.add(mic.processing, key).onChange(() => void mic.applyProcessing());
   }
 
-  folder.add(mouth.params, "mode", ["amplitude", "animated"]);
+  folder.add(mouth.params, "mode", ["amplitude", "animated", "vowel"]);
   folder.add(mouth.params, "openness", 0, 1, 0.05);
+
+  // `vowel` mode needs the speaker's own triangle; without one it behaves as
+  // `animated`, since there is no space to place anything in (SPEC.md 8.1).
+  const vowels = folder.addFolder("Vowel calibration");
+  vowels
+    .add({ calibrate: () => calibrator.start() }, "calibrate")
+    .name("record aa / ee / ou");
+  vowels.add({ cancel: () => { calibrator.cancel(); banner.hide(); } }, "cancel");
+  vowels
+    .add({ forget: () => { clearSetting("vowels"); onForget(); } }, "forget")
+    .name("forget calibration");
   folder.add(mic.params, "gain", 0.2, 6, 0.1).name("mic gain");
   folder.add(mic.params, "threshold", 1, 8, 0.1).name("noise gate");
   folder.add(mic.params, "release", 0.02, 0.4, 0.01).name("close time (s)");

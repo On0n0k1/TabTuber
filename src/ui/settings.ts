@@ -32,3 +32,35 @@ export function writeSetting(key: string, value: string): void {
     // Persistence is a convenience; losing it is not worth surfacing.
   }
 }
+
+/**
+ * Stores a small JSON value, for settings that are not a single choice.
+ *
+ * Validation is the caller's, since this cannot know the shape. A value that
+ * fails to parse is treated as absent rather than thrown, because a corrupted
+ * preference should cost the preference and not the session.
+ */
+export function readJson<T>(key: string, validate: (raw: unknown) => T | null): T | null {
+  try {
+    const raw = localStorage.getItem(PREFIX + key);
+    return raw === null ? null : validate(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
+export function writeJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(PREFIX + key, JSON.stringify(value));
+  } catch {
+    // Persistence is a convenience; losing it is not worth surfacing.
+  }
+}
+
+export function clearSetting(key: string): void {
+  try {
+    localStorage.removeItem(PREFIX + key);
+  } catch {
+    // As above.
+  }
+}

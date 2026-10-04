@@ -1,29 +1,31 @@
 /*
  * Decides whether the microphone is hearing speech (SPEC.md section 8).
  *
- * Deliberately not voice activity detection. Real VAD -- the sub-band
- * classifier in WebRTC, or the models Meet and Teams now use -- exists to
- * decide whether to transmit someone's voice. This only decides whether to
- * move a mouth, and nothing here records, transmits or interprets what was
- * said, so the accuracy those systems need would be wasted effort.
+ * Deliberately minimal. Noise rejection belongs at the microphone -- a
+ * noise-cancelling headset or a decent directional mic solves it better than
+ * any envelope follower can, and solves it for every application rather than
+ * just this one. Trying to do it here would cost latency on every utterance
+ * to fix a problem the hardware already fixes.
  *
- * It rejects transients by duration alone, which is the one property that
- * separates them without any analysis: a keystroke or a click lasts 10 to
- * 30ms, a syllable 50 to 300ms. Requiring the level to stay up for longer
- * than a keystroke can discards typing, mouse clicks and knocks, while
- * sustained non-speech -- a fan, music, someone else talking -- still gets
- * through. That is an accepted limit, not an oversight: catching those needs
- * spectral shape or a model, and the mouth moving to background music is a
- * much smaller problem than the mouth chattering as you type.
+ * So this rejects one thing: transients far too brief to be speech. A
+ * keystroke lasts 10 to 30ms, a syllable 50 to 300, and the threshold sits
+ * between them -- low enough that it barely delays the mouth, high enough to
+ * discard typing and clicks. Everything else is the microphone's job.
+ *
+ * Set `onset` to 0 to disable it entirely.
  *
  * Hangover holds the gate open briefly after the level drops, so the pauses
- * between words do not snap the mouth shut. Every real VAD does the same.
+ * between words do not snap the mouth shut. That costs nothing: it only ever
+ * extends how long the mouth stays open.
  */
 
 export interface SpeechGateParams {
   /** Energy above this counts toward opening the gate. */
   openLevel: number;
-  /** Seconds the level must hold before the gate opens. Longer than a keystroke. */
+  /**
+   * Seconds the level must hold before the gate opens. Longer than a
+   * keystroke, shorter than a syllable. 0 disables the gate.
+   */
   onset: number;
   /** Seconds the gate stays open after the level drops, covering word gaps. */
   hangover: number;
@@ -31,7 +33,10 @@ export interface SpeechGateParams {
 
 export const DEFAULT_SPEECH_GATE: SpeechGateParams = {
   openLevel: 0.06,
-  onset: 0.07,
+  // Comfortably above a keystroke, comfortably below a syllable, and half the
+  // delay the previous value cost. Lower it further, to 0, if the microphone
+  // is already handling noise.
+  onset: 0.04,
   hangover: 0.18,
 };
 

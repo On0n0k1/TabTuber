@@ -82,6 +82,17 @@ function burst(gate: SpeechGate, level: number, loudMs: number, quietMs: number)
   check("raising onset rejects longer bursts", out === 0);
 }
 
+// --- onset 0 disables the gate --------------------------------------------
+//
+// The escape hatch for someone whose microphone already handles noise, where
+// any gating is latency bought for nothing.
+{
+  const g = new SpeechGate();
+  g.params.onset = 0;
+  const out = g.update(0.5, FRAME);
+  check("onset 0 opens immediately", out === 0.5 && g.speaking, `${out}`);
+}
+
 // --- reset clears state ---------------------------------------------------
 {
   const g = new SpeechGate();

@@ -689,9 +689,9 @@ function wireLipSync(
   folder.add(mic.params, "threshold", 1, 8, 0.1).name("noise gate");
   folder.add(mic.params, "release", 0.02, 0.4, 0.01).name("close time (s)");
 
-  // Rejects typing and clicks by duration: a keystroke is far shorter than a
-  // syllable. Raise onset if typing still gets through.
-  folder.add(mic.gate.params, "onset", 0.01, 0.3, 0.01).name("min duration (s)");
+  // Rejects transients only; sustained noise is the microphone's job, which
+  // it does better than any envelope follower. 0 disables the gate entirely.
+  folder.add(mic.gate.params, "onset", 0, 0.3, 0.01).name("min duration (s)");
   folder.add(mic.gate.params, "hangover", 0.02, 0.6, 0.01).name("hangover (s)");
   folder.add(mic.gate.params, "openLevel", 0, 0.5, 0.01).name("open level");
   folder.add(mouth.params, "minHold", 0.04, 0.3, 0.01).name("viseme min (s)");

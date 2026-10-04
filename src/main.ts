@@ -52,7 +52,14 @@ import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.t
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
-import { clearSetting, readJson, readSetting, writeJson, writeSetting } from "./ui/settings.ts";
+import {
+  clearAllSettings,
+  clearSetting,
+  readJson,
+  readSetting,
+  writeJson,
+  writeSetting,
+} from "./ui/settings.ts";
 import { StatusBanner } from "./ui/statusBanner.ts";
 
 type BackendName = "holistic" | "pose";
@@ -344,7 +351,22 @@ function boot(): void {
 
   // Only the things reached most often stay open; everything else is one
   // click away rather than below the fold.
-  panel.collapseAllExcept(["Stats", "Lip sync", "View"]);
+  // Clearing takes effect on the next load, since values already read are
+  // held in memory. Said plainly rather than worked around, because reloading
+  // is the point: the reason to clear is to see a genuine first run.
+  panel.addSessionAction("clear saved settings", () => {
+    const removed = clearAllSettings();
+    console.info("settings: cleared", removed);
+    banner.show(
+      "info",
+      removed.length === 0
+        ? "Nothing was saved."
+        : `Cleared ${removed.join(", ")}. Reload for a first-run view.`,
+      { label: "Reload", run: () => location.reload() },
+    );
+  });
+
+  panel.collapseAllExcept(["Session", "Stats", "Lip sync", "View"]);
 
   // Started once, not per camera-ready: the video element is stable across
   // restarts, so starting a chain per state change would leave the old one

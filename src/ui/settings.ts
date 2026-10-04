@@ -64,3 +64,26 @@ export function clearSetting(key: string): void {
     // As above.
   }
 }
+
+/**
+ * Removes every setting this app owns, leaving other sites' keys alone.
+ *
+ * Takes effect on the next load, since values already read are held in
+ * memory. That is stated in the UI rather than worked around, because
+ * reloading is what the caller wants anyway: the reason to clear is to see a
+ * genuine first run (SPEC.md section 9).
+ */
+export function clearAllSettings(): string[] {
+  const removed: string[] = [];
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(PREFIX)) {
+        localStorage.removeItem(key);
+        removed.push(key.slice(PREFIX.length));
+      }
+    }
+  } catch {
+    // Blocked storage has nothing to clear.
+  }
+  return removed;
+}

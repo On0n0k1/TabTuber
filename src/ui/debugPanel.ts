@@ -85,6 +85,7 @@ export class DebugPanel {
   private readonly readoutGroups: { proxy: Record<string, string>; labels: readonly string[]; sample: () => readonly number[]; digits: number }[] = [];
 
   private readonly cameraFolder;
+  private readonly sessionFolder: GUI;
   private readonly viewFolder: GUI;
   private deviceController: ReturnType<GUI["add"]> | null = null;
   private selectedDeviceId = "";
@@ -93,6 +94,17 @@ export class DebugPanel {
     this.stage = opts.stage;
     this.camera = opts.camera;
     this.sample = opts.sample;
+
+    /*
+     * Created first so it sits at the top of a long panel. Resetting is
+     * reached for when something has been tuned into a confusing state, which
+     * is exactly when hunting for the control is most irritating.
+     */
+    const session = this.folder("Session");
+    session
+      .add({ reset: () => this.resetControls() }, "reset")
+      .name("reset panel to defaults");
+    this.sessionFolder = session;
 
     const stats = this.folder("Stats");
     for (const key of Object.keys(this.readouts) as (keyof Readouts)[]) {
@@ -184,6 +196,25 @@ export class DebugPanel {
     const folder = this.gui.addFolder(name);
     this.folders.set(name, folder);
     return folder;
+  }
+
+  /**
+   * Restores every control to the value it was created with, firing the
+   * change handlers so side effects follow.
+   *
+   * Note what this does NOT undo: a setting restored from storage was the
+   * controller's initial value, so resetting returns to the stored choice
+   * rather than to the built-in default. Clearing saved settings is the
+   * separate action for that.
+   */
+  resetControls(): void {
+    this.gui.reset();
+    console.info("panel: controls reset to their initial values");
+  }
+
+  /** Adds an action to the Session folder, for things the panel cannot do itself. */
+  addSessionAction(label: string, run: () => void): void {
+    this.sessionFolder.add({ [label]: run }, label);
   }
 
   /**

@@ -18,6 +18,21 @@ const BUDGET_MS = 100;
 /** Comfortably over budget rather than marginally; worth alarming about. */
 const BAD_MS = 150;
 
+/**
+ * Camera frame rate below which the readout says so.
+ *
+ * Because the number alone does not say what is slow, and the answer is
+ * frequently not the software. A webcam lengthens its exposure in dim light
+ * and drops its frame rate to suit, and everything downstream inherits it:
+ * measured at 180ms in a dim room, halving to 90ms with a lamp behind the
+ * subject and no other change (SPEC.md 6.1). Nobody looks for a lightbulb
+ * when a program is slow, so the readout has to point at it.
+ *
+ * 20 rather than something nearer 30, so an ordinary camera having a slightly
+ * off moment does not sit there accusing the room.
+ */
+const LOW_CAMERA_FPS = 20;
+
 export class LatencyHud {
   private readonly el: HTMLDivElement;
   private readonly value: HTMLSpanElement;
@@ -32,6 +47,7 @@ export class LatencyHud {
   private smoothed = 0;
   private shown = -1;
   private shownState = "";
+  private shownNote = "";
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement("div");
@@ -50,9 +66,10 @@ export class LatencyHud {
    *
    * `partial` marks a figure that is missing the camera's own delay because
    * the browser would not report it, so the readout can say so instead of
-   * presenting a smaller number as the whole truth.
+   * presenting a smaller number as the whole truth. `cameraFps` is 0 when
+   * nothing is arriving.
    */
-  update(latencyMs: number, partial: boolean): void {
+  update(latencyMs: number, cameraFps: number, partial: boolean): void {
     if (latencyMs <= 0) {
       this.setText("-", "", "idle");
       return;
@@ -64,14 +81,30 @@ export class LatencyHud {
 
     const rounded = Math.round(this.smoothed);
     const state = rounded <= BUDGET_MS ? "ok" : rounded <= BAD_MS ? "warn" : "bad";
-    // Only touched when the displayed value actually changes: this runs every
+    const note = this.noteFor(cameraFps, partial);
+
+    // Only touched when something displayed actually changes: this runs every
     // frame, and a text write per frame is layout work for nothing.
-    if (rounded === this.shown && state === this.shownState) return;
+    if (rounded === this.shown && state === this.shownState && note === this.shownNote) return;
     this.shown = rounded;
-    this.setText(`${rounded} ms`, partial ? "capture delay unknown" : "", state);
+    this.setText(`${rounded} ms`, note, state);
+  }
+
+  /**
+   * The one line under the number, or nothing.
+   *
+   * A slow camera outranks an unreported capture delay: it is the larger
+   * effect by far and it is the one with something to do about it.
+   */
+  private noteFor(cameraFps: number, partial: boolean): string {
+    if (cameraFps > 0 && cameraFps < LOW_CAMERA_FPS) {
+      return `camera ${cameraFps.toFixed(0)} fps`;
+    }
+    return partial ? "capture delay unknown" : "";
   }
 
   private setText(value: string, note: string, state: string): void {
+    this.shownNote = note;
     this.value.textContent = value;
     this.note.textContent = note;
     this.note.hidden = note === "";

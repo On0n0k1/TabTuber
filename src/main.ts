@@ -627,7 +627,9 @@ function boot(): void {
     toolbar.render();
 
     const { ms, partial } = latency();
-    latencyHud.update(ms, partial);
+    // Stale-aware, so a stopped camera reads as nothing arriving rather than
+    // freezing on the last rate it managed.
+    latencyHud.update(ms, cameraFps.staleAfter(1000), partial);
 
     if (calibrator.running) banner.show("info", calibrationMessage(calibrator));
 

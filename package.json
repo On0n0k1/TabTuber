@@ -17,6 +17,7 @@
     "check": "npm run check:math && npm run check:solver && npm run check:filter && npm run check:buffer && npm run check:mouth && npm run check:gate && npm run check:vowel && npm run check:face && npm run check:expression && npm run check:toolbar && npm run check:interp && npm run check:banner && npm run check:style",
     "check:filter": "node --experimental-strip-types src/filter/oneEuro.check.ts",
     "inspect-vrm": "node scripts/inspect-vrm.mjs",
+    "shrink-vrm": "node scripts/shrink-vrm.mjs",
     "check:buffer": "node --experimental-strip-types src/render/poseBuffer.check.ts",
     "check:mouth": "node --experimental-strip-types src/audio/mouth.check.ts",
     "check:gate": "node --experimental-strip-types src/audio/speechGate.check.ts",

@@ -152,19 +152,78 @@ const DT = 1 / 60;
   s.update(scores({ eyeLookDownLeft: 1, eyeLookDownRight: 1 }), false, DT, out);
   check("looking down gives negative pitch", s.gaze.pitch < 0, `${s.gaze.pitch.toFixed(1)}`);
 
-  const sideways = scores({ eyeLookInLeft: 1, eyeLookInRight: 1 });
-  s.update(sideways, false, DT, out);
+  /*
+   * A real sideways glance is NOT both eyes turning the same labelled way.
+   * The eyes are yoked, so looking left turns the left eye OUT and the right
+   * eye IN.
+   *
+   * This check used to use both eyes inward and call it a sideways glance.
+   * That is convergence, and it was the one input the old formula survived --
+   * which is how a yaw that was zero for every real glance passed.
+   */
+  const glanceLeft = scores({ eyeLookOutLeft: 1, eyeLookInRight: 1 });
+  const glanceRight = scores({ eyeLookInLeft: 1, eyeLookOutRight: 1 });
+
+  s.update(glanceLeft, false, DT, out);
+  const leftYaw = s.gaze.yaw;
+  check("a glance left moves the eyes at all", Math.abs(leftYaw) > 1,
+    `${leftYaw.toFixed(1)}`);
+  check("a glance left gives positive yaw", leftYaw > 0, `${leftYaw.toFixed(1)}`);
+
+  s.update(glanceRight, false, DT, out);
+  check("a glance right gives the opposite sign", s.gaze.yaw < 0,
+    `${s.gaze.yaw.toFixed(1)}`);
+  check("a glance right gives the same magnitude",
+    Math.abs(Math.abs(s.gaze.yaw) - Math.abs(leftYaw)) < 1e-6,
+    `${s.gaze.yaw.toFixed(1)} vs ${leftYaw.toFixed(1)}`);
+
+  // Both eyes toward the nose is a focus distance, not a direction to look.
+  s.update(scores({ eyeLookInLeft: 1, eyeLookInRight: 1 }), false, DT, out);
+  check("crossing the eyes is not a sideways glance", Math.abs(s.gaze.yaw) < 1e-6,
+    `${s.gaze.yaw.toFixed(1)}`);
+
+  /*
+   * Asserted non-vacuously, on purpose. The previous version compared
+   * Math.sign on both sides, and sign(0) === -sign(0) is true in JS, so a
+   * yaw that was always zero satisfied it. Magnitude is checked first.
+   */
+  s.update(glanceLeft, false, DT, out);
   const unmirrored = s.gaze.yaw;
-  s.update(sideways, true, DT, out);
-  check("mirroring reverses yaw", Math.sign(unmirrored) === -Math.sign(s.gaze.yaw),
+  s.update(glanceLeft, true, DT, out);
+  check("mirroring reverses yaw",
+    Math.abs(unmirrored) > 1 && unmirrored === -s.gaze.yaw,
     `${unmirrored.toFixed(1)} vs ${s.gaze.yaw.toFixed(1)}`);
 
-  // Never beyond the configured range, or the eyes leave their sockets.
+  // Never beyond the configured range, or the eyes leave their sockets. The
+  // gain is overdriven here because that is the input that could push past it.
   s.params.gazeRange = 15;
-  s.update(scores({ eyeLookUpLeft: 1, eyeLookUpRight: 1, eyeLookInLeft: 1, eyeLookInRight: 1 }), false, DT, out);
-  check("gaze stays within its range",
+  s.params.gazeGain = 6;
+  s.update(scores({ eyeLookUpLeft: 1, eyeLookUpRight: 1, eyeLookOutLeft: 1, eyeLookInRight: 1 }), false, DT, out);
+  check("gain cannot drive gaze beyond its range",
     Math.abs(s.gaze.pitch) <= 15.001 && Math.abs(s.gaze.yaw) <= 15.001,
     `yaw ${s.gaze.yaw.toFixed(1)} pitch ${s.gaze.pitch.toFixed(1)}`);
+}
+
+// --- gain scales a weak signal without inventing one ----------------------
+{
+  const s = new FaceSolver();
+  s.params.gazeGain = 1;
+  // What a real glance reports: well short of 1, which is why gain exists.
+  const faint = scores({ eyeLookOutLeft: 0.4, eyeLookInRight: 0.4 });
+  s.update(faint, false, DT, out);
+  const plain = s.gaze.yaw;
+
+  s.params.gazeGain = 2;
+  s.update(faint, false, DT, out);
+  check("gain moves the eyes further for the same glance", s.gaze.yaw > plain * 1.5,
+    `${plain.toFixed(1)} -> ${s.gaze.yaw.toFixed(1)}`);
+
+  // Gain must not manufacture a direction out of a face looking straight on.
+  s.params.gazeGain = 6;
+  s.update(scores({}), false, DT, out);
+  check("gain leaves a centred gaze centred",
+    s.gaze.yaw === 0 && s.gaze.pitch === 0,
+    `yaw ${s.gaze.yaw} pitch ${s.gaze.pitch}`);
 }
 
 // --- emotion is never inferred -------------------------------------------

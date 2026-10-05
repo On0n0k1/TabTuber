@@ -65,8 +65,31 @@ export interface FaceParams {
    * Face readout while blinking and set this to the peak actually reported.
    */
   blinkHigh: number;
-  /** Degrees of eye rotation at full deflection. */
+  /**
+   * Degrees of gaze handed to the model at full deflection.
+   *
+   * NOT degrees the eyeball turns. VRM models declare their own range maps,
+   * and the applier computes `outputScale * saturate(input / inputMaxValue)`
+   * -- so the model scales this down, often hard. The reference avatar maps
+   * an input of 90 onto 12.5 degrees outward, 4.75 inward, 14 down and 11.625
+   * up, which is the model author's statement of how far these eyes may
+   * travel, and it is already the clamp this used to try to be.
+   *
+   * So the useful value is the model's own `inputMaxValue`, almost always 90.
+   * Lower means asking for less than the model allows; HIGHER DOES NOTHING,
+   * because `saturate` clips the ratio at 1.
+   */
   gazeRange: number;
+  /**
+   * Multiplier on the reported gaze amount before it becomes an angle.
+   *
+   * The same problem as blink: MediaPipe's `eyeLook*` scores do not reach 1
+   * at a full glance, so passing them through unchanged spends only a
+   * fraction of the range above and the eyes barely leave centre. The result
+   * is clamped back into -1..1, so this cannot drive the eyes past what the
+   * model permits. Set it by watching the Face readout while glancing.
+   */
+  gazeGain: number;
 }
 
 export const DEFAULT_FACE_PARAMS: FaceParams = {
@@ -77,7 +100,9 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   blinkSpeed: 0.06,
   blinkLow: 0.15,
   blinkHigh: 0.55,
-  gazeRange: 18,
+  // The reference model's inputMaxValue; see gazeRange.
+  gazeRange: 90,
+  gazeGain: 2,
 };
 
 export interface GazeAngles {
@@ -93,6 +118,14 @@ export class FaceSolver {
   readonly gaze: GazeAngles = { yaw: 0, pitch: 0 };
   /** Raw reported blink, before remapping; shown so the range can be set from data. */
   readonly rawBlink = { left: 0, right: 0 };
+  /**
+   * Combined gaze before gain and range, -1..1, positive left and up.
+   *
+   * Shown for the same reason as rawBlink: `gazeGain` is set by watching what
+   * a real glance actually reports, and the angle alone cannot tell you
+   * whether a small movement is a weak signal or a low gain.
+   */
+  readonly rawGaze = { x: 0, y: 0 };
 
   /** Latched open/shut state per eye, and the eyelid's travel toward it. */
   private readonly shut = { left: false, right: false };
@@ -127,18 +160,39 @@ export class FaceSolver {
     }
 
     if (this.params.trackGaze) {
-      // Each direction is reported per eye; averaging the pair is steadier
-      // than either alone and the eyes move together in any case.
+      // Up and down mean the same thing for both eyes, so averaging the pair
+      // here is steadier than either alone and loses nothing.
       const up = avg(shape(scores, "eyeLookUpLeft"), shape(scores, "eyeLookUpRight"));
       const down = avg(shape(scores, "eyeLookDownLeft"), shape(scores, "eyeLookDownRight"));
-      const inward = avg(shape(scores, `eyeLookIn${L}` as "eyeLookInLeft"), shape(scores, `eyeLookIn${R}` as "eyeLookInRight"));
-      const outward = avg(shape(scores, `eyeLookOut${L}` as "eyeLookOutLeft"), shape(scores, `eyeLookOut${R}` as "eyeLookOutRight"));
 
-      const range = this.params.gazeRange;
-      // In and out are opposite directions for the two eyes, so the signed
-      // combination is what carries horizontal direction.
-      this.gaze.yaw = (inward - outward) * range * (mirrored ? -1 : 1);
-      this.gaze.pitch = (up - down) * range;
+      /*
+       * Horizontal has to be resolved PER EYE before averaging.
+       *
+       * The eyes are yoked: a glance to the subject's left turns the left eye
+       * outward and the right eye inward. Averaging `in` across the pair and
+       * `out` across the pair and then subtracting therefore compares two
+       * means that are always equal, and cancels to exactly zero for every
+       * real glance. It did: gaze sat dead ahead while blink worked, and the
+       * only input that moved it was both eyes inward, which is convergence
+       * rather than a direction (SPEC.md 13.6).
+       *
+       * Signed per eye and positive toward the subject's left, the two agree
+       * and can then be averaged. Convergence comes out as zero, which is
+       * right -- crossing your eyes is not somewhere to look.
+       *
+       * No mirrored name swap here, unlike blink. These are anatomical
+       * labels, so the subject's left eye is `...Left` whichever way the
+       * image is flipped; mirroring is one sign change on the result.
+       */
+      const leftEye = shape(scores, "eyeLookOutLeft") - shape(scores, "eyeLookInLeft");
+      const rightEye = shape(scores, "eyeLookInRight") - shape(scores, "eyeLookOutRight");
+
+      this.rawGaze.x = avg(leftEye, rightEye);
+      this.rawGaze.y = up - down;
+
+      const { gazeRange: range, gazeGain: gain } = this.params;
+      this.gaze.yaw = unit(this.rawGaze.x * gain) * range * (mirrored ? -1 : 1);
+      this.gaze.pitch = unit(this.rawGaze.y * gain) * range;
     }
   }
 
@@ -191,5 +245,10 @@ export class FaceSolver {
 
 function avg(a: number, b: number): number {
   return (a + b) * 0.5;
+}
+
+/** Clamps a gained amount back into -1..1, so gain cannot exceed the range. */
+function unit(value: number): number {
+  return Math.min(1, Math.max(-1, value));
 }
 

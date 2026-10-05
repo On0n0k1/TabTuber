@@ -340,12 +340,18 @@ function boot(): void {
   wireLivelinessControls(panel, solver, blink);
   // Raw values, not the remapped ones: the range is set by watching what the
   // model actually reports while blinking, which is rarely close to 1.
-  panel.addReadoutGroup("Face", ["blinkL", "blinkR", "gazeYaw", "gazePitch"], () => [
-    faceSolver.rawBlink.left,
-    faceSolver.rawBlink.right,
-    faceSolver.gaze.yaw,
-    faceSolver.gaze.pitch,
-  ], 2);
+  // Raw gaze as well as the angle: the angle is what the model is asked for,
+  // but it is gained and clamped, so a pinned 90 and a healthy signal look
+  // identical from it. The raw pair is what gazeGain is set against.
+  panel.addReadoutGroup("Face",
+    ["blinkL", "blinkR", "rawGazeX", "rawGazeY", "gazeYaw", "gazePitch"], () => [
+      faceSolver.rawBlink.left,
+      faceSolver.rawBlink.right,
+      faceSolver.rawGaze.x,
+      faceSolver.rawGaze.y,
+      faceSolver.gaze.yaw,
+      faceSolver.gaze.pitch,
+    ], 2);
 
   wireExpressionControls(panel, expressions);
   wireFaceControls(panel, faceSolver);
@@ -979,7 +985,10 @@ function wireFaceControls(panel: DebugPanel, face: FaceSolver): void {
   folder.add(face.params, "blinkLow", 0, 1, 0.01).name("eyes open below");
   folder.add(face.params, "blinkHigh", 0, 1, 0.01).name("eyes shut above");
   folder.add(face.params, "blinkSpeed", 0, 0.3, 0.01).name("lid travel (s)");
-  folder.add(face.params, "gazeRange", 0, 40, 1).name("gaze range (deg)");
+  // Up to 90 only: the model's range map saturates there, so a higher number
+  // is a control that does nothing (see FaceParams.gazeRange).
+  folder.add(face.params, "gazeRange", 0, 90, 1).name("gaze range (deg)");
+  folder.add(face.params, "gazeGain", 1, 6, 0.1).name("gaze gain");
 }
 
 /**

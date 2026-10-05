@@ -18,10 +18,31 @@ export type BannerKind = "error" | "info" | "busy";
  */
 const AUTO_DISMISS_MS = 3000;
 
+/**
+ * How often repeated raises are summarised to the console.
+ *
+ * A summary rather than a line per call: a caller in a render loop raises a
+ * message sixty times a second, and sixty lines a second is not a diagnostic,
+ * it is a wall. One line per second carrying the count and the call site says
+ * the same thing and names the culprit.
+ */
+const REPORT_MS = 1000;
+
+/** The first frame outside this file, which is whoever raised the message. */
+function callSite(): string {
+  const frames = (new Error().stack ?? "").split("\n").slice(1);
+  const outside = frames.find((f) => !f.includes("statusBanner"));
+  return (outside ?? frames[2] ?? "unknown").trim();
+}
+
 export class StatusBanner {
   private readonly el: HTMLDivElement;
   private timer: number | null = null;
   private shown = "";
+  /** Repeated raises in the current window, with where the first came from. */
+  private readonly repeats = new Map<string, { count: number; from: string }>();
+  private windowStart = 0;
+
   /**
    * A message that has had its turn, by timing out or by being closed.
    *
@@ -40,6 +61,7 @@ export class StatusBanner {
 
   show(kind: BannerKind, message: string, action?: { label: string; run: () => void }): void {
     const key = `${kind}:${message}`;
+    this.watch(key);
 
     /*
      * Two guards, both learned from one bug: a caller re-raising the same
@@ -126,6 +148,38 @@ export class StatusBanner {
     this.clearTimer();
     if (kind === "error") return;
     this.timer = window.setTimeout(() => this.dismiss(), AUTO_DISMISS_MS);
+  }
+
+  /**
+   * Counts how often each message is raised and reports anything repeating.
+   *
+   * Nothing is logged in normal operation, because a message raised once is
+   * raised once. A warning here means some caller is in a loop -- which is
+   * not fatal any more, since a repeated message neither rebuilds nor
+   * re-arms, but it is still a bug in the caller and it hid one before. The
+   * call site is captured so the loop can be found rather than guessed at;
+   * taking a stack is not cheap, so it is taken once per message per window.
+   */
+  private watch(key: string): void {
+    const now = performance.now();
+    if (this.windowStart === 0) this.windowStart = now;
+
+    const seen = this.repeats.get(key);
+    if (seen) seen.count++;
+    else this.repeats.set(key, { count: 1, from: callSite() });
+
+    if (now - this.windowStart < REPORT_MS) return;
+
+    const seconds = (now - this.windowStart) / 1000;
+    for (const [k, { count, from }] of this.repeats) {
+      if (count < 2) continue;
+      console.warn(
+        `banner: "${k}" raised ${count} times in ${seconds.toFixed(1)}s ` +
+        `(${(count / seconds).toFixed(0)}/s). Raised from:\n${from}`,
+      );
+    }
+    this.repeats.clear();
+    this.windowStart = now;
   }
 
   private clearTimer(): void {

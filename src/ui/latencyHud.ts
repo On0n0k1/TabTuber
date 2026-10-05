@@ -37,10 +37,23 @@ const BAD_MS = 150;
  */
 const LOW_CAMERA_FPS = 20;
 
+/** What each figure means, for anyone who did not build the pipeline. */
+const EXPLAIN = {
+  value:
+    "How long it takes a frame to reach the screen, from the camera through " +
+    "tracking and smoothing. OBS capture and encode are not included, so the " +
+    "viewer's figure is higher.",
+  note:
+    "How many frames the camera is producing each second to be processed. " +
+    "A webcam lengthens its exposure in dim light and slows down, which makes " +
+    "everything above it slower too.",
+} as const;
+
 export class LatencyHud {
   private readonly el: HTMLDivElement;
   private readonly value: HTMLSpanElement;
   private readonly note: HTMLSpanElement;
+  private readonly tip: HTMLDivElement;
 
   /**
    * Smoothed, because the raw per-frame figure swings by tens of
@@ -61,7 +74,33 @@ export class LatencyHud {
     this.value.className = "latency-value";
     this.note = document.createElement("span");
     this.note.className = "latency-note";
-    this.el.append(this.value, this.note);
+    /*
+     * Explained on hover, because the two figures are meaningless to anyone
+     * who has not read SPEC.md 9.2 -- a number with no units of meaning
+     * invites the wrong conclusion more than it informs.
+     *
+     * A tooltip element rather than `title`: that waits about a second, is
+     * styled by the OS, and never appears for a keyboard user. The spans are
+     * given tabindex so this one does.
+     */
+    this.tip = document.createElement("div");
+    this.tip.className = "latency-tip";
+    this.tip.hidden = true;
+
+    for (const [key, el] of [["value", this.value], ["note", this.note]] as const) {
+      el.tabIndex = 0;
+      const show = (): void => {
+        this.tip.textContent = EXPLAIN[key];
+        this.tip.hidden = false;
+      };
+      const hide = (): void => { this.tip.hidden = true; };
+      el.addEventListener("pointerenter", show);
+      el.addEventListener("pointerleave", hide);
+      el.addEventListener("focus", show);
+      el.addEventListener("blur", hide);
+    }
+
+    this.el.append(this.value, this.note, this.tip);
     parent.append(this.el);
   }
 

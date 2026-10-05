@@ -324,7 +324,46 @@ body[data-bg="key"] {
   font-size: 12px;
   line-height: 1.3;
   font-variant-numeric: tabular-nums;
+  /*
+   * The box itself stays transparent to the pointer so it does not eat
+   * drags meant for the canvas behind it; only the two figures take the
+   * pointer, because only they have anything to say.
+   */
   pointer-events: none;
+}
+
+.latency-value,
+.latency-note {
+  pointer-events: auto;
+  cursor: help;
+  width: fit-content;
+}
+
+.latency-value:focus-visible,
+.latency-note:focus-visible {
+  outline: 2px solid #7ec8ff;
+  outline-offset: 2px;
+}
+
+/* Below the readout, which sits at the top of the screen. */
+.latency-tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: max-content;
+  max-width: 260px;
+  padding: 7px 10px;
+  border: 1px solid #3a3a44;
+  border-radius: 7px;
+  background: rgb(14 14 18 / 0.96);
+  color: #c8c8d2;
+  font-size: 11px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.latency-tip[hidden] {
+  display: none;
 }
 
 .latency[hidden] {

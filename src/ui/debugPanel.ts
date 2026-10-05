@@ -137,6 +137,11 @@ export class DebugPanel {
       this.camera.element.style.display = v ? "" : "none";
     });
 
+    // The device list is its own signal now; the panel is the only thing that
+    // cared about it, and routing it through the camera state made every
+    // other listener re-handle a transition that never happened.
+    this.camera.onDevicesChanged(() => void this.refreshDevices());
+
     this.camera.onStateChange((s) => {
       if (s.kind === "ready") {
         this.readouts.resolution = `${s.width}x${s.height}`;

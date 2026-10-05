@@ -22,6 +22,8 @@ export class StatusBanner {
   private readonly el: HTMLDivElement;
   private timer: number | null = null;
   private shown = "";
+  /** The message the user closed by hand, which must not come straight back. */
+  private dismissed = "";
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement("div");
@@ -32,12 +34,30 @@ export class StatusBanner {
   }
 
   show(kind: BannerKind, message: string, action?: { label: string; run: () => void }): void {
-    // Re-raising a live message restarts its countdown without rebuilding
-    // anything: the calibration countdown calls this every frame.
-    this.arm(kind);
     const key = `${kind}:${message}`;
+
+    /*
+     * Two guards, both learned from one bug: a caller re-raising the same
+     * message over and over made the banner impossible to get rid of. It had
+     * been dismissed and came straight back, and its timeout never fired
+     * because every call restarted it.
+     *
+     * So an identical message that is already up is a no-op -- it does not
+     * rebuild and, crucially, does not re-arm, which means a message raised
+     * every frame still times out three seconds after it first appeared. And
+     * a message closed by hand stays closed until something different is
+     * raised, because a user dismissing something is an instruction, not a
+     * suggestion.
+     *
+     * The caller that prompted this is fixed; these keep the next one from
+     * being able to do it.
+     */
+    if (key === this.dismissed) return;
     if (key === this.shown && !this.el.hidden) return;
+
     this.shown = key;
+    this.dismissed = "";
+    this.arm(kind);
 
     this.el.dataset["kind"] = kind;
     this.el.replaceChildren(document.createTextNode(message));
@@ -60,7 +80,7 @@ export class StatusBanner {
     close.type = "button";
     close.textContent = "\u00d7";
     close.setAttribute("aria-label", "Dismiss");
-    close.addEventListener("click", () => this.hide());
+    close.addEventListener("click", () => this.dismiss());
     this.el.append(close);
 
     this.el.hidden = false;
@@ -72,6 +92,18 @@ export class StatusBanner {
     this.shown = "";
     this.el.hidden = true;
     this.flag();
+  }
+
+  /**
+   * Closed by the user, as opposed to by the code that raised it.
+   *
+   * Remembered so a caller repeating the same message cannot put it straight
+   * back. Any different message clears the memory.
+   */
+  private dismiss(): void {
+    const closing = this.shown;
+    this.hide();
+    this.dismissed = closing;
   }
 
   /** Starts the countdown for anything that is not a blocking error. */

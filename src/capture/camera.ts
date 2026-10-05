@@ -81,6 +81,7 @@ export class Camera {
   private stream: MediaStream | null = null;
   private currentState: CameraState = { kind: "idle" };
   private readonly listeners = new Set<(s: CameraState) => void>();
+  private readonly deviceListeners = new Set<() => void>();
   private readonly video: HTMLVideoElement;
 
   constructor() {
@@ -195,10 +196,26 @@ export class Camera {
     this.setState({ kind: "error", reason, message: ERROR_MESSAGES[reason] });
   }
 
+  /**
+   * The set of attached cameras changed.
+   *
+   * Its own channel, not a replay of the camera state. Replaying state made
+   * every state listener re-handle a transition that had not happened, and
+   * they cannot tell the difference: the status banner re-raised whatever
+   * message matched the current state on every devicechange, so a message
+   * could not be dismissed or time out while the events kept coming -- which
+   * they do, on systems where the device list churns.
+   *
+   * An active stream that was unplugged is not this; that surfaces through
+   * the track's ended event.
+   */
+  onDevicesChanged(cb: () => void): () => void {
+    this.deviceListeners.add(cb);
+    return () => this.deviceListeners.delete(cb);
+  }
+
   private readonly handleDeviceChange = (): void => {
-    // Only relevant as a signal to refresh a device list in the UI; an active
-    // stream that was unplugged surfaces through the track's ended event.
-    for (const cb of this.listeners) cb(this.currentState);
+    for (const cb of this.deviceListeners) cb();
   };
 
   stop(): void {
@@ -216,5 +233,6 @@ export class Camera {
     );
     this.video.remove();
     this.listeners.clear();
+    this.deviceListeners.clear();
   }
 }

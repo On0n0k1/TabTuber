@@ -242,6 +242,19 @@ export class DebugPanel {
   }
 
   /**
+   * Collapses the panel itself, to its title bar.
+   *
+   * The panel is for diagnosis, not for setup (SPEC.md 9.1): a new user
+   * should get a working avatar without opening it, and an open panel is an
+   * invitation to read it, which is an invitation to change something and
+   * then wonder why the avatar looks wrong. Closed, it is one unobtrusive bar
+   * that stays available to anyone who needs it.
+   */
+  collapse(): void {
+    this.gui.close();
+  }
+
+  /**
    * Collapses every folder except the named ones.
    *
    * The panel has grown to a dozen folders as features landed, which is long

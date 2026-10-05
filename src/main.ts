@@ -565,9 +565,15 @@ function boot(): void {
     );
   });
 
-  // Lip sync no longer needs to be open: the switch that went unnoticed in it
-  // is on the toolbar now.
-  panel.collapseAllExcept(["Session", "Stats", "View"]);
+  /*
+   * Folders collapsed, and then the whole panel collapsed over them, so it
+   * opens tidy for whoever does need it and stays out of the way of everyone
+   * else (SPEC.md 9.1). Stats is left open because it is the one folder that
+   * answers "is this working", which is the question someone opening the
+   * panel at all is most likely to have.
+   */
+  panel.collapseAllExcept(["Stats"]);
+  panel.collapse();
 
   // Started once, not per camera-ready: the video element is stable across
   // restarts, so starting a chain per state change would leave the old one

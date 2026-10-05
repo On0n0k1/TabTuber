@@ -57,6 +57,39 @@ export const ICONS = {
     <path d="M9.6 14.4q2.4 2 4.8 0" />
     <path d="M7.4 7.4 16.6 16.6" />`,
 
+  /* --- finger tracking --------------------------------------------------- */
+
+  /*
+   * A hand with its fingers SPREAD, not a closed palm.
+   *
+   * Four candidate hands were drawn and this was the only one whose fingers
+   * stayed separate at 22 pixels; the others merged into a blob and read as a
+   * generic "stop" hand. Spread fingers also happen to be the thing the
+   * feature does -- fingers that move independently -- so the icon says what
+   * is being toggled rather than merely "hand".
+   */
+  fingers: `
+    <path d="M12 20.4a5.6 5.6 0 0 1-5.6-5.6V9.6" />
+    <path d="M12 20.4a5.6 5.6 0 0 0 5.6-5.6V9.6" />
+    <path d="M6.4 12.4 4.9 8.6" />
+    <path d="M9.2 10.6V5.4" />
+    <path d="M12 10.2V4.2" />
+    <path d="M14.8 10.6V5.4" />
+    <path d="M17.6 12.4 19.1 8.6" />`,
+
+  // A mitten was the semantically better "off" -- fingers present but not
+  // articulated -- and was drawn twice. Without finger strokes to give it
+  // scale the silhouette reads as an egg, so the slash wins on legibility.
+  fingersOff: `
+    <path d="M12 20.4a5.6 5.6 0 0 1-5.6-5.6V9.6" />
+    <path d="M12 20.4a5.6 5.6 0 0 0 5.6-5.6V9.6" />
+    <path d="M6.4 12.4 4.9 8.6" />
+    <path d="M9.2 10.6V5.4" />
+    <path d="M12 10.2V4.2" />
+    <path d="M14.8 10.6V5.4" />
+    <path d="M17.6 12.4 19.1 8.6" />
+    <path d="M5.6 5 18.4 19.2" />`,
+
   /* --- posture ---------------------------------------------------------- */
 
   standing: `

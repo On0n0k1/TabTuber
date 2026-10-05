@@ -466,6 +466,19 @@ function boot(): void {
       },
     },
     {
+      kind: "toggle",
+      label: "Finger tracking",
+      // Experimental, and the tooltip says why rather than leaving the word
+      // to be interpreted.
+      tip: "Articulates the fingers from the hand landmarks. Experimental: it also makes tracking jitter easier to see.",
+      icon: "fingers",
+      iconOff: "fingersOff",
+      get: () => solver.options.fingers,
+      set: (on: boolean) => {
+        solver.options.fingers = on;
+      },
+    },
+    {
       /*
        * Posture is a manual choice, not a detected one (SPEC.md 5.8).
        * Detecting it would mean reading leg visibility, but the tracker
@@ -811,14 +824,10 @@ function wireSolverControls(
   folder.add(solver.options, "flipMinArea", 0, 0.5, 0.01).name("flip: min area");
   folder.add(solver.options, "flipHysteresis", 1, 10, 1).name("flip: frames");
   folder.add(solver.options, "useHandLandmarks").name("use palm frame");
-  /*
-   * Experimental (SPEC.md 12, item 3). Off by default because articulated
-   * fingers make residual jitter MORE visible rather than less -- they give
-   * the eye more detail to notice wobble in -- and finger landmarks are the
-   * noisiest part of the hand. Needs the palm frame above: the pose backend's
-   * three knuckle estimates cannot say anything about a finger.
-   */
-  folder.add(solver.options, "fingers").name("fingers (experimental)");
+  // Fingers are on the toolbar, not here: turning them off is something you
+  // do mid-stream when they misbehave, and nothing is in both places
+  // (SPEC.md 9.1). They still need the palm frame above -- the pose backend's
+  // three knuckle estimates cannot say anything about a finger.
 
   // Degradation constants (SPEC.md 5.7). All provisional and only settleable
   // by watching a limb actually leave frame.

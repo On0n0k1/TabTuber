@@ -883,8 +883,10 @@ function wireFaceControls(
   folder.add(face.params, "enabled").name("apply to avatar");
   folder.add(face.params, "trackBlink").name("blink from camera");
   folder.add(face.params, "trackGaze").name("gaze from camera");
+  folder.add(face.params, "blinkSnap").name("blink is open/shut");
   folder.add(face.params, "blinkLow", 0, 1, 0.01).name("eyes open below");
   folder.add(face.params, "blinkHigh", 0, 1, 0.01).name("eyes shut above");
+  folder.add(face.params, "blinkSpeed", 0, 0.3, 0.01).name("lid travel (s)");
   folder.add(face.params, "gazeRange", 0, 40, 1).name("gaze range (deg)");
   folder.add(face.params, "inferEmotion").name("infer emotion");
   folder.add(face.params, "emotionFloor", 0, 1, 0.05).name("emotion floor");

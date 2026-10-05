@@ -34,10 +34,30 @@ export interface FaceParams {
    */
   inferEmotion: boolean;
   /**
-   * Blendshape value treated as eyes fully open.
+   * Treat blinking as open-or-shut rather than a continuous amount.
    *
-   * Anything below is clamped to zero, so a resting face does not sit with
-   * its eyelids slightly lowered.
+   * Blinking is very nearly binary in life, and the tracker's reading is
+   * noisy, so interpolating between the two states mostly interpolates
+   * between readings of noise -- eyelids that tremble rather than blink. With
+   * this on, `blinkLow` and `blinkHigh` become a hysteresis band: below the
+   * floor the eye opens, above the ceiling it shuts, and in between it holds
+   * whatever it was. A single threshold would chatter whenever the signal sat
+   * near it; two with a gap between cannot.
+   */
+  blinkSnap: boolean;
+  /**
+   * Seconds for the eyelid to travel once the state flips.
+   *
+   * Not zero: an instantaneous jump reads as a glitch rather than a blink. A
+   * real eyelid closes in roughly 50 to 100ms.
+   */
+  blinkSpeed: number;
+  /**
+   * Blendshape value below which the eye is open.
+   *
+   * Continuous mode clamps anything lower to zero so a resting face does not
+   * sit with its eyelids lowered; snap mode treats it as the lower edge of
+   * the hysteresis band.
    */
   blinkLow: number;
   /**
@@ -62,6 +82,8 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   trackBlink: true,
   trackGaze: true,
   inferEmotion: false,
+  blinkSnap: true,
+  blinkSpeed: 0.06,
   blinkLow: 0.15,
   blinkHigh: 0.55,
   gazeRange: 18,
@@ -85,6 +107,10 @@ export class FaceSolver {
   readonly gaze: GazeAngles = { yaw: 0, pitch: 0 };
   /** Raw reported blink, before remapping; shown so the range can be set from data. */
   readonly rawBlink = { left: 0, right: 0 };
+
+  /** Latched open/shut state per eye, and the eyelid's travel toward it. */
+  private readonly shut = { left: false, right: false };
+  private readonly lid = { left: 0, right: 0 };
   /** Smoothed emotion weights, so a flicker in the scores is not a flicker on the face. */
   private readonly emotion: Record<Emotion, number> = {
     happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0,
@@ -111,8 +137,8 @@ export class FaceSolver {
     if (this.params.trackBlink) {
       this.rawBlink.left = shape(scores, `eyeBlink${L}` as "eyeBlinkLeft");
       this.rawBlink.right = shape(scores, `eyeBlink${R}` as "eyeBlinkRight");
-      out.set("blinkLeft", this.remapBlink(this.rawBlink.left));
-      out.set("blinkRight", this.remapBlink(this.rawBlink.right));
+      out.set("blinkLeft", this.eyelid("left", this.rawBlink.left, dt));
+      out.set("blinkRight", this.eyelid("right", this.rawBlink.right, dt));
       // `blink` would double up with the per-eye expressions on a model that
       // defines all three, closing the eyes twice over.
       out.set("blink", 0);
@@ -141,6 +167,39 @@ export class FaceSolver {
         out.set(e, 0);
       }
     }
+  }
+
+  /**
+   * One eyelid's position, 0 open to 1 shut.
+   *
+   * In snap mode the decision is latched with hysteresis and the lid travels
+   * toward it, so noise inside the band cannot move the eye at all. In
+   * continuous mode the reading is stretched onto the full range instead.
+   */
+  private eyelid(side: "left" | "right", raw: number, dt: number): number {
+    if (!this.params.blinkSnap) {
+      this.lid[side] = this.remapBlink(raw);
+      this.shut[side] = this.lid[side] > 0.5;
+      return this.lid[side];
+    }
+
+    if (raw >= this.params.blinkHigh) this.shut[side] = true;
+    else if (raw <= this.params.blinkLow) this.shut[side] = false;
+    // Between the two the state is held, which is the whole point.
+
+    const target = this.shut[side] ? 1 : 0;
+    const speed = this.params.blinkSpeed;
+    if (speed <= 0) {
+      this.lid[side] = target;
+    } else {
+      // Linear rather than exponential: an eyelid travels at a rate and
+      // arrives, where an exponential approach never quite closes.
+      const step = dt / speed;
+      this.lid[side] = target > this.lid[side]
+        ? Math.min(target, this.lid[side] + step)
+        : Math.max(target, this.lid[side] - step);
+    }
+    return this.lid[side];
   }
 
   /**

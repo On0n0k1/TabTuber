@@ -33,6 +33,9 @@ const DT = 1 / 60;
 // --- blink maps per eye, and mirroring swaps them -------------------------
 {
   const s = new FaceSolver();
+  // Travel disabled: this covers which eye is driven, not how fast the lid
+  // moves, and with travel on a single frame is only part way shut.
+  s.params.blinkSpeed = 0;
   const winkLeft = scores({ eyeBlinkLeft: 1 });
 
   s.update(winkLeft, false, DT, out);
@@ -51,6 +54,7 @@ const DT = 1 / 60;
 // reported symptom the remap exists for.
 {
   const s = new FaceSolver();
+  s.params.blinkSnap = false; // these cover the continuous remap
   s.params.blinkLow = 0.15;
   s.params.blinkHigh = 0.55;
 
@@ -75,9 +79,63 @@ const DT = 1 / 60;
     Math.abs(s.rawBlink.left - 0.35) < 1e-6, `${s.rawBlink.left}`);
 }
 
+// --- snap mode: noise inside the band must not move the eye ---------------
+//
+// The reported symptom. A single threshold chatters whenever the reading sits
+// near it, which reads as eyelids trembling rather than blinking.
+{
+  const s = new FaceSolver();
+  s.params.blinkSnap = true;
+  s.params.blinkLow = 0.15;
+  s.params.blinkHigh = 0.55;
+  s.params.blinkSpeed = 0; // isolate the decision from the travel
+
+  // Settle open, then jitter around the MIDDLE of the band.
+  s.update(scores({ eyeBlinkLeft: 0 }), false, DT, out);
+  let moved = false;
+  for (let i = 0; i < 200; i++) {
+    const noisy = 0.35 + Math.sin(i * 12.9898) * 0.18; // 0.17 .. 0.53
+    s.update(scores({ eyeBlinkLeft: noisy }), false, DT, out);
+    if ((out.get("blinkLeft") ?? 0) !== 0) moved = true;
+  }
+  check("noise inside the band never moves the eyelid", !moved);
+
+  // Crossing the ceiling shuts it, and it stays shut through the same noise.
+  s.update(scores({ eyeBlinkLeft: 0.7 }), false, DT, out);
+  check("crossing the ceiling shuts the eye", out.get("blinkLeft") === 1);
+
+  let reopened = false;
+  for (let i = 0; i < 200; i++) {
+    const noisy = 0.35 + Math.sin(i * 7.13) * 0.18;
+    s.update(scores({ eyeBlinkLeft: noisy }), false, DT, out);
+    if ((out.get("blinkLeft") ?? 0) !== 1) reopened = true;
+  }
+  check("it stays shut through the same noise", !reopened);
+
+  // And only a reading below the floor opens it again.
+  s.update(scores({ eyeBlinkLeft: 0.1 }), false, DT, out);
+  check("dropping below the floor opens it", out.get("blinkLeft") === 0);
+}
+
+// --- the lid travels rather than teleporting ------------------------------
+{
+  const s = new FaceSolver();
+  s.params.blinkSnap = true;
+  s.params.blinkSpeed = 0.06;
+  s.update(scores({ eyeBlinkLeft: 0 }), false, DT, out);
+  s.update(scores({ eyeBlinkLeft: 0.9 }), false, DT, out);
+  const afterOne = out.get("blinkLeft") ?? 0;
+  check("one frame does not slam the lid shut", afterOne > 0 && afterOne < 1,
+    `${afterOne.toFixed(2)}`);
+
+  for (let i = 0; i < 10; i++) s.update(scores({ eyeBlinkLeft: 0.9 }), false, DT, out);
+  check("the lid arrives fully shut", out.get("blinkLeft") === 1);
+}
+
 // --- the combined blink must not double up --------------------------------
 {
   const s = new FaceSolver();
+  s.params.blinkSpeed = 0;
   s.update(scores({ eyeBlinkLeft: 1, eyeBlinkRight: 1 }), false, DT, out);
   check("both eyes shut without also driving the combined blink",
     out.get("blinkLeft") === 1 && out.get("blinkRight") === 1 && out.get("blink") === 0);

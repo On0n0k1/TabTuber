@@ -332,9 +332,9 @@ function boot(): void {
     view.mirror = v;
   });
 
-  applyCompareOffset(view.compareOffset, stickFigure, debugRig, avatarSlot);
+  applyCompareOffset(view.compareOffset, stickFigure, debugRig);
   wireAvatar(avatarSlot, stage, banner, debugRig);
-  wireSolverControls(panel, solver, view, stickFigure, debugRig, avatarSlot);
+  wireSolverControls(panel, solver, view, stickFigure, debugRig);
   wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
@@ -666,19 +666,25 @@ async function startPipeline(
 }
 
 /**
- * The two 3D views sit side by side by default so divergence between them is
- * obvious. Setting the offset to zero overlays them, which is better for
- * judging small errors once the gross ones are gone.
+ * Separates the debug references from the avatar so they can be compared
+ * side by side.
+ *
+ * The avatar does NOT move. It is the output, the camera is aimed at the
+ * origin, and the canvas is what OBS captures -- so offsetting it puts the
+ * subject off centre in the actual capture, which it did: the avatar started
+ * 0.55m to the right and had to be dragged back every session. It was one of
+ * three specimens being compared when this was written, and is not any more.
+ *
+ * The references move around it instead, which costs nothing because they are
+ * dev affordances with their own visibility toggles.
  */
 function applyCompareOffset(
   offset: number,
   stickFigure: StickFigure,
   debugRig: DebugRig,
-  avatarSlot: AvatarSlot,
 ): void {
   stickFigure.object.position.x = -offset;
   debugRig.setOffsetX(offset);
-  avatarSlot.setOffsetX(offset);
 }
 
 /**
@@ -736,7 +742,6 @@ function wireSolverControls(
   view: { mirror: boolean; compareOffset: number },
   stickFigure: StickFigure,
   debugRig: DebugRig,
-  avatarSlot: AvatarSlot,
 ): void {
   const folder = panel.folder("Solver");
 
@@ -782,8 +787,9 @@ function wireSolverControls(
 
   folder
     .add(view, "compareOffset", 0, 1.2, 0.05)
+    // Moves the stick figure and the rig apart; the avatar stays centred.
     .name("compare offset")
-    .onChange((v: number) => applyCompareOffset(v, stickFigure, debugRig, avatarSlot));
+    .onChange((v: number) => applyCompareOffset(v, stickFigure, debugRig));
 }
 
 /**

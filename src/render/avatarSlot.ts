@@ -86,10 +86,6 @@ export class AvatarSlot {
     this.current?.setVisible(visible);
   }
 
-  setOffsetX(x: number): void {
-    this.group.position.x = x;
-  }
-
   apply(pose: AvatarPose): void {
     this.current?.apply(pose);
   }

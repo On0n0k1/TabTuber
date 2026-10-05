@@ -29,4 +29,8 @@ npm-debug.log*
 
 # MediaPipe runtime assets, staged by scripts/fetch-assets.mjs
 public/mediapipe/
-public/models/
+# Staged at build time by scripts/fetch-assets.mjs, except the two avatars
+# below, which are committed because they are what the model picker offers.
+public/models/*
+!public/models/AvatarSample_B.vrm
+!public/models/AvatarSample_X.vrm

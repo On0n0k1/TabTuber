@@ -418,3 +418,74 @@ body[data-banner] .latency {
 .latency-note[data-slow="true"] {
   color: #e5c15c;
 }
+
+/*
+ * Setup sheet (SPEC.md 9.1).
+ *
+ * Centred above the toolbar that opens it. Not aligned to the button: the
+ * toolbar is itself centred and its width depends on how many controls it
+ * has, so pinning the sheet to one button would make its position depend on
+ * the number of buttons beside it.
+ */
+.sheet {
+  position: fixed;
+  bottom: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  padding: 14px 16px 12px;
+  border: 1px solid #3a3a44;
+  border-radius: 10px;
+  background: rgb(20 20 26 / 0.94);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+}
+
+.sheet[hidden] {
+  display: none;
+}
+
+.sheet-title {
+  margin-bottom: 10px;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sheet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+  color: #a8a8b4;
+}
+
+.sheet-row select,
+.sheet-file {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid #3a3a44;
+  border-radius: 5px;
+  background: #14141a;
+  color: #e8e8e8;
+  font: inherit;
+  font-size: 11px;
+}
+
+.sheet-row input[type="checkbox"] {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  accent-color: #7ec8ff;
+}
+
+.sheet-hint {
+  margin-top: 10px;
+  color: #6b6b78;
+  font-size: 10px;
+  line-height: 1.45;
+}

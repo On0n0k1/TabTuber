@@ -210,7 +210,19 @@ export class Toolbar {
       // Repainted now rather than waiting for the next frame, so the button
       // responds to the press even if the render loop is not running.
       this.render();
-      this.showTip(button);
+
+      /*
+       * The tooltip is refreshed only if it is still up, which it is when a
+       * pointer is hovering -- a cycle button's tooltip names the state it is
+       * now in, and that should update under the cursor.
+       *
+       * Re-showing unconditionally was wrong twice over: it put the tooltip
+       * back after an action deliberately dismissed it, so a button that
+       * opens something where the tooltip sits covered what it had just
+       * opened; and it raised a tooltip for a click that came from code
+       * rather than from a pointer that was never there.
+       */
+      if (!this.tip.hidden) this.showTip(button);
     });
     el.addEventListener("pointerenter", () => this.showTip(button));
     el.addEventListener("pointerleave", () => this.hideTip());
@@ -238,6 +250,17 @@ export class Toolbar {
 
   private hideTip(): void {
     this.tip.hidden = true;
+  }
+
+  /**
+   * Dismisses the tooltip from outside.
+   *
+   * For a button that opens something in the same place the tooltip occupies.
+   * The pointer is still over the button after the click, so the tooltip
+   * would otherwise sit on top of whatever just opened.
+   */
+  dismissTip(): void {
+    this.hideTip();
   }
 
   /**

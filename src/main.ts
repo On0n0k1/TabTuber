@@ -67,6 +67,7 @@ import {
 } from "./ui/settings.ts";
 import { StatusBanner } from "./ui/statusBanner.ts";
 import type { IconName } from "./ui/icons.ts";
+import { SetupSheet } from "./ui/setupSheet.ts";
 import { Toolbar } from "./ui/toolbar.ts";
 
 type BackendName = "holistic" | "pose";
@@ -74,6 +75,18 @@ type TrackerRegistry = Record<BackendName, () => Tracker>;
 
 /** Holistic tracks better overall and is the only source of hand data. */
 const DEFAULT_BACKEND: BackendName = "holistic";
+
+/**
+ * Avatars offered in the setup sheet.
+ *
+ * Only models committed to the repository, because this list has to be true
+ * in a deployment and `public/models` is otherwise staged at build time and
+ * ignored. Anything else arrives by upload or by being dropped on the page.
+ */
+const MODELS = [
+  { label: "Avatar X", url: "/models/AvatarSample_X.vrm" },
+  { label: "Avatar B", url: "/models/AvatarSample_B.vrm" },
+] as const;
 
 const POSTURES = ["sitting", "standing"] as const;
 
@@ -363,9 +376,7 @@ function boot(): void {
   panel.addViewToggle("debugRig", true, (v) => debugRig.setVisible(v));
   panel.addViewToggle("avatar", true, (v) => avatarSlot.setVisible(v));
   panel.addViewToggle("latency", true, (v) => latencyHud.setVisible(v));
-  panel.addViewToggle("mirror", view.mirror, (v) => {
-    view.mirror = v;
-  });
+  // mirror is in the setup sheet: a performer's choice, not a diagnostic.
 
   applyCompareOffset(view.compareOffset, stickFigure, debugRig);
   wireAvatar(avatarSlot, stage, banner, debugRig);
@@ -434,6 +445,29 @@ function boot(): void {
   };
 
   /*
+   * Setup, as opposed to diagnosis (SPEC.md 9.1). Everything a first run
+   * depends on and nothing that does not: these were in the debug panel,
+   * where a camera picker meant an unusable app whose fix could not be found.
+   */
+  const setup = new SetupSheet(ui, {
+    models: MODELS,
+    listCameras: () => camera.listDevices(),
+    onCamera: (deviceId) => void camera.start(deviceId),
+    onModel: (url, label) => void avatarSlot.load(url, label),
+    onUpload: (buffer, name) => void avatarSlot.load(buffer, name),
+    onBackground: (mode) => {
+      // "transparent" removes the attribute entirely so nothing paints behind
+      // the canvas -- what OBS capture actually sees.
+      if (mode === "transparent") delete document.body.dataset["bg"];
+      else document.body.dataset["bg"] = mode;
+    },
+    onMirror: (on) => {
+      view.mirror = on;
+    },
+    mirror: () => view.mirror,
+  });
+
+  /*
    * The performer surface (SPEC.md 9.1).
    *
    * Everything on it was in the debug panel and has been moved out rather
@@ -442,6 +476,21 @@ function boot(): void {
    * controls that are set once.
    */
   const toolbar = new Toolbar(ui, [
+    {
+      kind: "toggle",
+      label: "Setup",
+      tip: "Camera, avatar, background and mirror.",
+      icon: "setup",
+      // No separate "off" artwork: the lit state already says it is open.
+      get: () => setup.isOpen,
+      set: () => {
+        setup.toggle();
+        // The sheet opens where the tooltip sits, and the pointer is still
+        // over the button, so the tooltip would land on top of it.
+        toolbar.dismissTip();
+      },
+    },
+    "divider",
     {
       kind: "toggle",
       label: "Microphone",

@@ -57,6 +57,21 @@ export const ICONS = {
     <path d="M9.6 14.4q2.4 2 4.8 0" />
     <path d="M7.4 7.4 16.6 16.6" />`,
 
+  /* --- setup ------------------------------------------------------------- */
+
+  /*
+   * Sliders, not a gear. Two gears were drawn and both fail at 22px: the
+   * teeth are about two pixels each, so one reads as a dotted ring and the
+   * other as a ship's wheel. Sliders stay crisp, and they say "things to
+   * adjust" where a gear says "machine configuration" -- which is the debug
+   * panel's job, not this one's.
+   */
+  setup: `
+    <path d="M5 7h14M5 12h14M5 17h14" />
+    <circle cx="9.5" cy="7" r="1.9" />
+    <circle cx="15" cy="12" r="1.9" />
+    <circle cx="8" cy="17" r="1.9" />`,
+
   /* --- finger tracking --------------------------------------------------- */
 
   /*

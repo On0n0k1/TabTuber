@@ -91,7 +91,6 @@ export class DebugPanel {
   private readonly cameraFolder;
   private readonly sessionFolder: GUI;
   private readonly viewFolder: GUI;
-  private deviceController: ReturnType<GUI["add"]> | null = null;
   private selectedDeviceId = "";
 
   constructor(opts: DebugPanelOptions) {
@@ -115,6 +114,13 @@ export class DebugPanel {
       stats.add(this.readouts, key).listen().disable();
     }
 
+    /*
+     * Choosing a camera and a background moved to the setup sheet, with
+     * mirror and the avatar picker: they are what a first run depends on, and
+     * a panel nobody should need to open is the wrong place for them
+     * (SPEC.md 9.1). Restarting a camera stays, because it is what you reach
+     * for when one has stopped delivering, which is a diagnosis.
+     */
     this.cameraFolder = this.folder("Camera");
     this.cameraFolder
       .add({ restart: () => void this.camera.start(this.selectedDeviceId || undefined) }, "restart")
@@ -122,14 +128,6 @@ export class DebugPanel {
 
     this.viewFolder = this.folder("View");
     const view = this.viewFolder;
-    view
-      .add(this.view, "background", ["checker", "key", "transparent"])
-      .onChange((mode: BackgroundMode) => {
-        // "transparent" removes the attribute entirely so nothing paints
-        // behind the canvas -- this is what OBS capture actually sees.
-        if (mode === "transparent") delete document.body.dataset["bg"];
-        else document.body.dataset["bg"] = mode;
-      });
     view.add(this.view, "helpers").onChange((v: boolean) => {
       this.stage.helpersVisible = v;
     });
@@ -153,25 +151,14 @@ export class DebugPanel {
   }
 
   /**
-   * lil-gui dropdowns have a fixed option list, so a changed device set means
-   * replacing the controller rather than mutating it.
+   * Remembers which camera is in use, so `restart` restarts that one.
+   *
+   * The picker itself is in the setup sheet; this only has to know what was
+   * chosen there, which the camera reports when it becomes ready.
    */
   private async refreshDevices(): Promise<void> {
     const devices: CameraDevice[] = await this.camera.listDevices();
-    if (devices.length === 0) return;
-
-    this.deviceController?.destroy();
-    const options = Object.fromEntries(devices.map((d) => [d.label, d.deviceId]));
     this.selectedDeviceId ||= devices[0]?.deviceId ?? "";
-
-    const proxy = { device: this.selectedDeviceId };
-    this.deviceController = this.cameraFolder
-      .add(proxy, "device", options)
-      .name("device")
-      .onChange((id: string) => {
-        this.selectedDeviceId = id;
-        void this.camera.start(id);
-      });
   }
 
   /** Call once per rendered frame. */

@@ -33,6 +33,22 @@ export interface FaceParams {
    * this is a guess, and a confident wrong expression reads worse than none.
    */
   inferEmotion: boolean;
+  /**
+   * Blendshape value treated as eyes fully open.
+   *
+   * Anything below is clamped to zero, so a resting face does not sit with
+   * its eyelids slightly lowered.
+   */
+  blinkLow: number;
+  /**
+   * Blendshape value treated as eyes fully shut.
+   *
+   * MediaPipe's eyeBlink scores rarely reach 1 even with eyes firmly closed
+   * -- 0.4 to 0.7 is typical, varying with lighting and head angle -- so
+   * passing them through unchanged leaves the eyelids at half mast. Watch the
+   * Face readout while blinking and set this to the peak actually reported.
+   */
+  blinkHigh: number;
   /** Degrees of eye rotation at full deflection. */
   gazeRange: number;
   /** Emotion weights below this are treated as zero, to avoid twitching. */
@@ -46,6 +62,8 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   trackBlink: true,
   trackGaze: true,
   inferEmotion: false,
+  blinkLow: 0.15,
+  blinkHigh: 0.55,
   gazeRange: 18,
   emotionFloor: 0.25,
   emotionSmoothing: 0.35,
@@ -65,6 +83,8 @@ export class FaceSolver {
   params: FaceParams = { ...DEFAULT_FACE_PARAMS };
 
   readonly gaze: GazeAngles = { yaw: 0, pitch: 0 };
+  /** Raw reported blink, before remapping; shown so the range can be set from data. */
+  readonly rawBlink = { left: 0, right: 0 };
   /** Smoothed emotion weights, so a flicker in the scores is not a flicker on the face. */
   private readonly emotion: Record<Emotion, number> = {
     happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0,
@@ -89,10 +109,10 @@ export class FaceSolver {
     const R = mirrored ? "Left" : "Right";
 
     if (this.params.trackBlink) {
-      const left = shape(scores, `eyeBlink${L}` as "eyeBlinkLeft");
-      const right = shape(scores, `eyeBlink${R}` as "eyeBlinkRight");
-      out.set("blinkLeft", left);
-      out.set("blinkRight", right);
+      this.rawBlink.left = shape(scores, `eyeBlink${L}` as "eyeBlinkLeft");
+      this.rawBlink.right = shape(scores, `eyeBlink${R}` as "eyeBlinkRight");
+      out.set("blinkLeft", this.remapBlink(this.rawBlink.left));
+      out.set("blinkRight", this.remapBlink(this.rawBlink.right));
       // `blink` would double up with the per-eye expressions on a model that
       // defines all three, closing the eyes twice over.
       out.set("blink", 0);
@@ -121,6 +141,19 @@ export class FaceSolver {
         out.set(e, 0);
       }
     }
+  }
+
+  /**
+   * Stretches the reported range onto a full close.
+   *
+   * Not a gain: a plain multiplier would lift the resting value too, leaving
+   * the avatar permanently squinting. A floor and a ceiling keep open eyes
+   * fully open while letting a partial reading still shut them.
+   */
+  private remapBlink(value: number): number {
+    const { blinkLow, blinkHigh } = this.params;
+    if (blinkHigh <= blinkLow) return value;
+    return Math.min(1, Math.max(0, (value - blinkLow) / (blinkHigh - blinkLow)));
   }
 
   /**

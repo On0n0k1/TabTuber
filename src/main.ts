@@ -293,6 +293,15 @@ function boot(): void {
   wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
+  // Raw values, not the remapped ones: the range is set by watching what the
+  // model actually reports while blinking, which is rarely close to 1.
+  panel.addReadoutGroup("Face", ["blinkL", "blinkR", "gazeYaw", "gazePitch"], () => [
+    faceSolver.rawBlink.left,
+    faceSolver.rawBlink.right,
+    faceSolver.gaze.yaw,
+    faceSolver.gaze.pitch,
+  ], 2);
+
   wireFaceControls(panel, faceSolver, trackerConfig, () => {
     const factory = trackers[backendNames.includes("holistic") ? "holistic" : "pose"];
     void host.use("holistic", factory);
@@ -874,6 +883,8 @@ function wireFaceControls(
   folder.add(face.params, "enabled").name("apply to avatar");
   folder.add(face.params, "trackBlink").name("blink from camera");
   folder.add(face.params, "trackGaze").name("gaze from camera");
+  folder.add(face.params, "blinkLow", 0, 1, 0.01).name("eyes open below");
+  folder.add(face.params, "blinkHigh", 0, 1, 0.01).name("eyes shut above");
   folder.add(face.params, "gazeRange", 0, 40, 1).name("gaze range (deg)");
   folder.add(face.params, "inferEmotion").name("infer emotion");
   folder.add(face.params, "emotionFloor", 0, 1, 0.05).name("emotion floor");

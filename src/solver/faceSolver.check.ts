@@ -44,6 +44,37 @@ const DT = 1 / 60;
     out.get("blinkRight") === 1 && out.get("blinkLeft") === 0);
 }
 
+// --- a partial reading must still close the eyes fully --------------------
+//
+// MediaPipe's eyeBlink scores rarely reach 1 even with eyes firmly shut, so
+// passing them through unchanged leaves the eyelids at half mast. This is the
+// reported symptom the remap exists for.
+{
+  const s = new FaceSolver();
+  s.params.blinkLow = 0.15;
+  s.params.blinkHigh = 0.55;
+
+  s.update(scores({ eyeBlinkLeft: 0.55, eyeBlinkRight: 0.55 }), false, DT, out);
+  check("a 0.55 reading closes the eyes fully",
+    out.get("blinkLeft") === 1 && out.get("blinkRight") === 1,
+    `${out.get("blinkLeft")}`);
+
+  // And a resting face must not sit there squinting, which a plain gain would
+  // cause by lifting the idle value along with everything else.
+  s.update(scores({ eyeBlinkLeft: 0.1, eyeBlinkRight: 0.1 }), false, DT, out);
+  check("a resting face keeps its eyes fully open",
+    out.get("blinkLeft") === 0 && out.get("blinkRight") === 0,
+    `${out.get("blinkLeft")}`);
+
+  s.update(scores({ eyeBlinkLeft: 0.35 }), false, DT, out);
+  check("a half closure maps to halfway",
+    Math.abs((out.get("blinkLeft") ?? 0) - 0.5) < 0.01, `${out.get("blinkLeft")}`);
+
+  // The raw value stays visible, since the range is set by reading it.
+  check("the raw reading is reported unmodified",
+    Math.abs(s.rawBlink.left - 0.35) < 1e-6, `${s.rawBlink.left}`);
+}
+
 // --- the combined blink must not double up --------------------------------
 {
   const s = new FaceSolver();

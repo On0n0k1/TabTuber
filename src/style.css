@@ -70,7 +70,6 @@ body[data-bg="key"] {
 }
 
 .banner button {
-  margin-left: auto;
   padding: 4px 12px;
   border: 1px solid currentColor;
   border-radius: 3px;
@@ -82,6 +81,22 @@ body[data-bg="key"] {
 
 .banner button:hover {
   background: rgb(255 255 255 / 0.15);
+}
+
+/*
+ * Whichever button comes first is pushed to the far end; the rest follow it.
+ * Written this way because a banner may carry an action and a dismiss, or
+ * only a dismiss, and both have to sit right.
+ */
+.banner button:first-of-type {
+  margin-left: auto;
+}
+
+/* Always present, so a message can never become unclosable. */
+.banner .banner-close {
+  padding: 2px 8px;
+  font-size: 15px;
+  line-height: 1.1;
 }
 
 /*
@@ -286,11 +301,15 @@ body[data-bg="key"] {
  * Out from under the banner while one is up.
  *
  * The banner is full width at the top with a higher z-index, so without this
- * the readout disappears behind it -- and it disappears exactly when
- * something has gone wrong, which is when a number is most worth having. Done
- * in CSS so neither element has to know about the other.
+ * the readout disappears behind it -- exactly when something has gone wrong,
+ * which is when a number is most worth having.
+ *
+ * Driven by an attribute StatusBanner sets, not by `:has()`. `:has` reads
+ * better and couples nothing, but a browser without it drops the rule and
+ * leaves the readout underneath, which is the very failure this prevents --
+ * and it fails silently.
  */
-body:has(.banner:not([hidden])) .latency {
+body[data-banner] .latency {
   top: 64px;
 }
 

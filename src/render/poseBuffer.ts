@@ -44,9 +44,22 @@ export const MAX_LOOKAHEAD = 3;
 export class PoseBuffer {
   /**
    * Frames of future to wait for. 0 passes poses straight through, which is
-   * the behaviour before this existed.
+   * the behaviour before this existed, and is the default.
+   *
+   * Off by default because its price is a tracker frame interval per frame,
+   * and that interval is not a constant. A webcam lengthens its exposure in
+   * dim light and drops its frame rate to suit, so the same setting cost
+   * 66ms in good light and 190ms in a dim room -- measured at 95ms per frame
+   * against an inference time of 8 to 15ms, meaning the pipeline was idle
+   * most of the time and the buffer was most of the latency.
+   *
+   * That is the wrong shape for a default: it is cheapest when everything is
+   * already fine and most expensive exactly when the pipeline is struggling.
+   * Spike rejection is worth having on a fast camera, so the control stays;
+   * it is opt-in, and the Stats readout prices it in milliseconds so the cost
+   * is visible before it is paid (SPEC.md 6.1).
    */
-  lookahead = 1;
+  lookahead = 0;
 
   /**
    * How far a sample may sit from the window's medoid and still be averaged

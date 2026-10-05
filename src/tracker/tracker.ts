@@ -29,6 +29,8 @@ export interface Tracker {
   readonly delegate: TrackerDelegate;
   /** Inference time only -- not end-to-end pipeline latency. */
   readonly inferenceMs: number;
+  /** Set when inference failed fatally; tracking has stopped. */
+  readonly lastError: string | null;
   init(): Promise<void>;
   attach(video: HTMLVideoElement): void;
   detach(): void;
@@ -62,6 +64,7 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
 
   private delegateInUse: TrackerDelegate = "GPU";
   private lastInferenceMs = 0;
+  private failure: string | null = null;
   /** detectForVideo rejects non-monotonic timestamps, and a paused or looped
    *  video can repeat one, so the last value is tracked and nudged past. */
   private lastTimestamp = -1;
@@ -88,7 +91,12 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
     return this.lastInferenceMs;
   }
 
+  get lastError(): string | null {
+    return this.failure;
+  }
+
   async init(): Promise<void> {
+    this.failure = null;
     try {
       this.landmarker = await this.build("GPU");
       this.delegateInUse = "GPU";
@@ -136,7 +144,26 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
       this.lastTimestamp = timestamp;
 
       const started = performance.now();
-      const frame = this.process(landmarker, video, timestamp);
+      let frame: PoseFrame | null = null;
+      try {
+        frame = this.process(landmarker, video, timestamp);
+      } catch (err) {
+        /*
+         * A throw here used to kill tracking outright: the callback below
+         * never ran, the loop stopped, and the only symptom was a live camera
+         * feed driving nothing. Inference failures are reported and the loop
+         * is detached deliberately rather than left to die silently.
+         *
+         * Detaching rather than continuing because these failures are
+         * structural -- a graph that cannot open will not open on the next
+         * frame either, and retrying would flood the console sixty times a
+         * second with the same message.
+         */
+        this.failure = String(err);
+        console.error(`${this.name}: inference failed, tracking stopped`, err);
+        this.detach();
+        return;
+      }
       this.lastInferenceMs = performance.now() - started;
 
       if (frame) for (const cb of this.handlers) cb(frame);

@@ -37,6 +37,21 @@ export interface HolisticTrackerOptions {
   readonly minPoseDetectionConfidence?: number;
   readonly minPosePresenceConfidence?: number;
   readonly minHandLandmarksConfidence?: number;
+  /**
+   * Produce ARKit blendshapes for face tracking (SPEC.md 13).
+   *
+   * FORCES THE CPU DELEGATE. The blendshape model uses operations the WebGL
+   * delegate cannot compile -- DEQUANTIZE, and a STRIDED_SLICE with
+   * shrink_axis_mask -- and the failure is not graceful: Calculator::Open()
+   * throws and the whole Holistic graph stops, taking body and hand tracking
+   * with it. There is no partial mode where the face falls back and the rest
+   * keeps running.
+   *
+   * So this is a real trade rather than a feature flag: face tracking costs
+   * the GPU delegate for everything. Off by default; the panel toggles it and
+   * rebuilds.
+   */
+  readonly faceBlendshapes?: boolean;
 }
 
 /** Mutable hand buffer; the frame exposes it as a readonly HandFrame. */
@@ -49,6 +64,10 @@ interface HandBuffer {
 export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
   override readonly name = "holistic";
   override readonly tracksHands = true;
+
+  get tracksFace(): boolean {
+    return this.options.faceBlendshapes ?? false;
+  }
 
   private readonly options: HolisticTrackerOptions;
 
@@ -76,15 +95,25 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
 
   protected override async build(delegate: TrackerDelegate): Promise<HolisticLandmarker> {
     const fileset = await visionFileset();
+
+    // Forced rather than requested: on GPU the blendshape graph fails to open
+    // and takes the whole pipeline down with it, so honouring the caller's
+    // delegate here would just mean a tracker that throws on its first frame.
+    const wanted = this.options.faceBlendshapes ? "CPU" : delegate;
+    if (this.options.faceBlendshapes && delegate !== "CPU") {
+      console.info("holistic: face blendshapes require the CPU delegate");
+    }
+
     return HolisticLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_PATH, delegate },
+      baseOptions: { modelAssetPath: MODEL_PATH, delegate: wanted },
       runningMode: "VIDEO",
       minPoseDetectionConfidence: this.options.minPoseDetectionConfidence ?? 0.6,
       minPosePresenceConfidence: this.options.minPosePresenceConfidence ?? 0.6,
       minHandLandmarksConfidence: this.options.minHandLandmarksConfidence ?? 0.5,
       // The face graph runs regardless; this adds the blendshape classifier
-      // on top, which is the part that costs extra (SPEC.md 13).
-      outputFaceBlendshapes: true,
+      // on top, which is the part that costs extra -- and the part the WebGL
+      // delegate cannot run at all (SPEC.md 13).
+      outputFaceBlendshapes: this.options.faceBlendshapes ?? false,
       outputPoseSegmentationMasks: false,
     });
   }

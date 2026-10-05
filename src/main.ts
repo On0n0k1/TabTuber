@@ -96,8 +96,11 @@ function boot(): void {
   // Holistic first: it tracks better overall, and it is the only backend that
   // supplies real hand landmarks (SPEC.md 11). Pose is kept selectable as a
   // fallback and as an independent reference when the two disagree.
+  // Face blendshapes force the CPU delegate, so the choice is made when the
+  // tracker is built and changing it rebuilds (see HolisticTrackerOptions).
+  const trackerConfig = { faceBlendshapes: false };
   const trackers = {
-    holistic: () => new HolisticTracker(),
+    holistic: () => new HolisticTracker({ faceBlendshapes: trackerConfig.faceBlendshapes }),
     pose: () => new PoseTracker(),
   } satisfies Record<string, () => Tracker>;
 
@@ -290,7 +293,10 @@ function boot(): void {
   wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator, poseBuffer);
   wireLivelinessControls(panel, solver, blink);
-  wireFaceControls(panel, faceSolver);
+  wireFaceControls(panel, faceSolver, trackerConfig, () => {
+    const factory = trackers[backendNames.includes("holistic") ? "holistic" : "pose"];
+    void host.use("holistic", factory);
+  });
   wireLipSync(panel, banner, mic, mouth, calibrator, () => {
     calibration = null;
     vowelRefs = null;
@@ -384,7 +390,16 @@ function boot(): void {
   // running and double the reported rate.
   countCameraFrames(camera.element, cameraFps);
 
+  // A fatal inference failure stops tracking; without this the only symptom
+  // is a live camera driving a motionless avatar.
+  let reportedError: string | null = null;
   stage.onFrame(({ dt }) => {
+    const trackerError = host.current?.lastError ?? null;
+    if (trackerError && trackerError !== reportedError) {
+      reportedError = trackerError;
+      banner.show("error", `Tracking stopped: ${trackerError}`);
+    }
+
     renderFps.tick();
     interpolator.step(dt);
 
@@ -838,9 +853,25 @@ function wireLipSync(
  * Blink and gaze are measurements; emotion is a guess (SPEC.md 13), so they
  * are separate switches rather than one.
  */
-function wireFaceControls(panel: DebugPanel, face: FaceSolver): void {
+function wireFaceControls(
+  panel: DebugPanel,
+  face: FaceSolver,
+  trackerConfig: { faceBlendshapes: boolean },
+  rebuild: () => void,
+): void {
   const folder = panel.folder("Face");
-  folder.add(face.params, "enabled");
+
+  /*
+   * Separate from `enabled` on purpose. This one changes what the tracker
+   * produces and costs the GPU delegate for the entire pipeline, so it
+   * rebuilds; `enabled` only changes what is done with the result.
+   */
+  folder
+    .add(trackerConfig, "faceBlendshapes")
+    .name("track face (CPU only)")
+    .onChange(rebuild);
+
+  folder.add(face.params, "enabled").name("apply to avatar");
   folder.add(face.params, "trackBlink").name("blink from camera");
   folder.add(face.params, "trackGaze").name("gaze from camera");
   folder.add(face.params, "gazeRange", 0, 40, 1).name("gaze range (deg)");

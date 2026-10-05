@@ -22,8 +22,13 @@ export class StatusBanner {
   private readonly el: HTMLDivElement;
   private timer: number | null = null;
   private shown = "";
-  /** The message the user closed by hand, which must not come straight back. */
-  private dismissed = "";
+  /**
+   * A message that has had its turn, by timing out or by being closed.
+   *
+   * Remembered so that a caller raising the same text in a loop cannot
+   * resurrect it. Cleared as soon as something different is raised.
+   */
+  private spent = "";
 
   constructor(parent: HTMLElement) {
     this.el = document.createElement("div");
@@ -44,19 +49,24 @@ export class StatusBanner {
      *
      * So an identical message that is already up is a no-op -- it does not
      * rebuild and, crucially, does not re-arm, which means a message raised
-     * every frame still times out three seconds after it first appeared. And
-     * a message closed by hand stays closed until something different is
-     * raised, because a user dismissing something is an instruction, not a
-     * suggestion.
+     * every frame still times out three seconds after it first appeared.
+     *
+     * And once a message has had its turn, by timing out or by being closed,
+     * the same text is refused until something different is raised. Without
+     * that second rule the first one is not enough: hiding clears `shown`,
+     * so the very next call in the loop puts the message straight back and it
+     * only ever blinks off for a frame. A user dismissing something is an
+     * instruction rather than a suggestion, and a timeout that a loop can
+     * undo is not a timeout.
      *
      * The caller that prompted this is fixed; these keep the next one from
      * being able to do it.
      */
-    if (key === this.dismissed) return;
+    if (key === this.spent) return;
     if (key === this.shown && !this.el.hidden) return;
 
     this.shown = key;
-    this.dismissed = "";
+    this.spent = "";
     this.arm(kind);
 
     this.el.dataset["kind"] = kind;
@@ -95,22 +105,27 @@ export class StatusBanner {
   }
 
   /**
-   * Closed by the user, as opposed to by the code that raised it.
+   * Retires the current message, whether the user closed it or it timed out.
    *
-   * Remembered so a caller repeating the same message cannot put it straight
-   * back. Any different message clears the memory.
+   * `hide()` clears `shown`, so the key is taken first; it is what stops the
+   * same text being raised again.
    */
   private dismiss(): void {
     const closing = this.shown;
     this.hide();
-    this.dismissed = closing;
+    this.spent = closing;
   }
 
-  /** Starts the countdown for anything that is not a blocking error. */
+  /**
+   * Starts the countdown for anything that is not a blocking error.
+   *
+   * Timing out goes through `dismiss`, not `hide`, so the message is marked
+   * spent. Otherwise a caller in a loop re-raises it on the next tick.
+   */
   private arm(kind: BannerKind): void {
     this.clearTimer();
     if (kind === "error") return;
-    this.timer = window.setTimeout(() => this.hide(), AUTO_DISMISS_MS);
+    this.timer = window.setTimeout(() => this.dismiss(), AUTO_DISMISS_MS);
   }
 
   private clearTimer(): void {

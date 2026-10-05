@@ -111,8 +111,37 @@ const el = parent.children[0] as FakeElement;
   check("a repeated message still times out", el.hidden === true);
 }
 
+/*
+ * --- a timeout must survive the loop that raised the message --------------
+ *
+ * The case the first version of this file missed. It stopped the spam before
+ * checking the timeout, so it never saw that hiding clears `shown`, which
+ * lets the very next call in the loop raise the message again. The banner
+ * blinked off for one frame every three seconds and looked, correctly, like
+ * it was never clearing at all.
+ */
+{
+  // Anything different clears the previous block's spent key, which is itself
+  // the behaviour that lets a message be raised again legitimately.
+  banner.show("info", "unrelated");
+  banner.hide();
+
+  banner.show("busy", "Requesting camera access...");
+  check("the message is up before the timeout", el.hidden === false);
+
+  fireTimeout();
+  check("the timeout hides it", el.hidden === true);
+
+  // The caller has no idea any of this happened and keeps going.
+  for (let i = 0; i < 50; i++) banner.show("busy", "Requesting camera access...");
+  check("a looping caller cannot resurrect a timed-out message",
+    el.hidden === true);
+}
+
 // --- dismissing by hand sticks --------------------------------------------
 {
+  banner.show("info", "A different message, so the last one is forgotten");
+  banner.hide();
   banner.show("busy", "Requesting camera access...");
   const close = el.find("banner-close");
   check("every message carries a dismiss button", close !== undefined);

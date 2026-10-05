@@ -54,7 +54,21 @@ body[data-bg="key"] {
   background-color: #00b140; /* broadcast chroma key green */
 }
 
-/* Blocking conditions the user must act on, not diagnostics. */
+/*
+ * Blocking conditions the user must act on, not diagnostics.
+ *
+ * The [hidden] rule below is load-bearing, not tidiness. `display` here is an
+ * author declaration and the browser's own `[hidden] { display: none }` is a
+ * user-agent one, so this wins and the attribute stops doing anything. The
+ * banner had no such rule for its whole life: every message ever shown stayed
+ * on screen forever, because `hidden = true` set an attribute that nothing
+ * acted on. Any rule that sets `display` on an element toggled through
+ * `.hidden` needs its own guard.
+ */
+.banner[hidden] {
+  display: none;
+}
+
 .banner {
   position: fixed;
   top: 0;

@@ -374,3 +374,8 @@ body[data-banner] .latency {
 .latency-note[hidden] {
   display: none;
 }
+
+/* A camera rate low enough to be the reason the figure above is large. */
+.latency-note[data-slow="true"] {
+  color: #e5c15c;
+}

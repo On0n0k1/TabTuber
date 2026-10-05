@@ -66,18 +66,19 @@ export interface FaceParams {
    */
   blinkHigh: number;
   /**
-   * Degrees of gaze handed to the model at full deflection.
+   * Degrees the eyeball turns at full deflection, the same both ways and on
+   * both axes.
    *
-   * NOT degrees the eyeball turns. VRM models declare their own range maps,
-   * and the applier computes `outputScale * saturate(input / inputMaxValue)`
-   * -- so the model scales this down, often hard. The reference avatar maps
-   * an input of 90 onto 12.5 degrees outward, 4.75 inward, 14 down and 11.625
-   * up, which is the model author's statement of how far these eyes may
-   * travel, and it is already the clamp this used to try to be.
+   * An approximate range on purpose. Routing this through the model's own
+   * declared range maps was tried and abandoned: they are asymmetric by
+   * design -- the reference avatar allows 12.5 degrees outward against 4.75
+   * inward -- so the two eyes rotate by different amounts for one gaze
+   * direction and visibly drift apart. A single symmetric number keeps the
+   * eyes together, which matters far more than honouring a per-eye limit
+   * nobody can see being honoured.
    *
-   * So the useful value is the model's own `inputMaxValue`, almost always 90.
-   * Lower means asking for less than the model allows; HIGHER DOES NOTHING,
-   * because `saturate` clips the ratio at 1.
+   * Kept small because eye geometry is shallow. Rotate a stylized eye much
+   * past ten degrees and the iris slides off the eyeball.
    */
   gazeRange: number;
   /**
@@ -90,6 +91,16 @@ export interface FaceParams {
    * model permits. Set it by watching the Face readout while glancing.
    */
   gazeGain: number;
+  /**
+   * Seconds of smoothing on the gaze signal.
+   *
+   * The `eyeLook*` scores are noisy in the same way the blink score is, and
+   * eyes are small and near the centre of attention, so jitter that would
+   * pass unnoticed on a wrist reads as a tremor here. Blink could be latched
+   * to two states because blinking really is binary; gaze is continuous and
+   * has to be filtered instead.
+   */
+  gazeSmoothing: number;
 }
 
 export const DEFAULT_FACE_PARAMS: FaceParams = {
@@ -100,9 +111,9 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   blinkSpeed: 0.06,
   blinkLow: 0.15,
   blinkHigh: 0.55,
-  // The reference model's inputMaxValue; see gazeRange.
-  gazeRange: 90,
+  gazeRange: 10,
   gazeGain: 2,
+  gazeSmoothing: 0.08,
 };
 
 export interface GazeAngles {
@@ -187,8 +198,13 @@ export class FaceSolver {
       const leftEye = shape(scores, "eyeLookOutLeft") - shape(scores, "eyeLookInLeft");
       const rightEye = shape(scores, "eyeLookInRight") - shape(scores, "eyeLookOutRight");
 
-      this.rawGaze.x = avg(leftEye, rightEye);
-      this.rawGaze.y = up - down;
+      // Smoothed before gain, so raising the gain does not also amplify the
+      // jitter it is being raised to overcome.
+      const k = this.params.gazeSmoothing <= 0
+        ? 1
+        : Math.min(1, 1 - Math.exp(-dt / this.params.gazeSmoothing));
+      this.rawGaze.x += (avg(leftEye, rightEye) - this.rawGaze.x) * k;
+      this.rawGaze.y += (up - down - this.rawGaze.y) * k;
 
       const { gazeRange: range, gazeGain: gain } = this.params;
       this.gaze.yaw = unit(this.rawGaze.x * gain) * range * (mirrored ? -1 : 1);

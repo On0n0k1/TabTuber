@@ -143,13 +143,24 @@ const DT = 1 / 60;
     out.get("blinkLeft") === 1 && out.get("blinkRight") === 1 && out.get("blink") === 0);
 }
 
+/**
+ * Runs a gaze input to rest.
+ *
+ * Gaze is smoothed, so a single frame reads part way there. Direction is
+ * testable after one frame but magnitude is not, and comparing two
+ * directions needs both to have settled.
+ */
+function settleGaze(s: FaceSolver, sc: Float32Array, mirrored = false): void {
+  for (let i = 0; i < 90; i++) s.update(sc, mirrored, DT, out);
+}
+
 // --- gaze direction and its mirror ----------------------------------------
 {
   const s = new FaceSolver();
-  s.update(scores({ eyeLookUpLeft: 1, eyeLookUpRight: 1 }), false, DT, out);
+  settleGaze(s, scores({ eyeLookUpLeft: 1, eyeLookUpRight: 1 }));
   check("looking up gives positive pitch", s.gaze.pitch > 0, `${s.gaze.pitch.toFixed(1)}`);
 
-  s.update(scores({ eyeLookDownLeft: 1, eyeLookDownRight: 1 }), false, DT, out);
+  settleGaze(s, scores({ eyeLookDownLeft: 1, eyeLookDownRight: 1 }));
   check("looking down gives negative pitch", s.gaze.pitch < 0, `${s.gaze.pitch.toFixed(1)}`);
 
   /*
@@ -164,13 +175,13 @@ const DT = 1 / 60;
   const glanceLeft = scores({ eyeLookOutLeft: 1, eyeLookInRight: 1 });
   const glanceRight = scores({ eyeLookInLeft: 1, eyeLookOutRight: 1 });
 
-  s.update(glanceLeft, false, DT, out);
+  settleGaze(s, glanceLeft);
   const leftYaw = s.gaze.yaw;
   check("a glance left moves the eyes at all", Math.abs(leftYaw) > 1,
     `${leftYaw.toFixed(1)}`);
   check("a glance left gives positive yaw", leftYaw > 0, `${leftYaw.toFixed(1)}`);
 
-  s.update(glanceRight, false, DT, out);
+  settleGaze(s, glanceRight);
   check("a glance right gives the opposite sign", s.gaze.yaw < 0,
     `${s.gaze.yaw.toFixed(1)}`);
   check("a glance right gives the same magnitude",
@@ -178,7 +189,7 @@ const DT = 1 / 60;
     `${s.gaze.yaw.toFixed(1)} vs ${leftYaw.toFixed(1)}`);
 
   // Both eyes toward the nose is a focus distance, not a direction to look.
-  s.update(scores({ eyeLookInLeft: 1, eyeLookInRight: 1 }), false, DT, out);
+  settleGaze(s, scores({ eyeLookInLeft: 1, eyeLookInRight: 1 }));
   check("crossing the eyes is not a sideways glance", Math.abs(s.gaze.yaw) < 1e-6,
     `${s.gaze.yaw.toFixed(1)}`);
 
@@ -187,18 +198,18 @@ const DT = 1 / 60;
    * Math.sign on both sides, and sign(0) === -sign(0) is true in JS, so a
    * yaw that was always zero satisfied it. Magnitude is checked first.
    */
-  s.update(glanceLeft, false, DT, out);
+  settleGaze(s, glanceLeft);
   const unmirrored = s.gaze.yaw;
-  s.update(glanceLeft, true, DT, out);
+  settleGaze(s, glanceLeft, true);
   check("mirroring reverses yaw",
-    Math.abs(unmirrored) > 1 && unmirrored === -s.gaze.yaw,
+    Math.abs(unmirrored) > 1 && Math.abs(unmirrored + s.gaze.yaw) < 1e-6,
     `${unmirrored.toFixed(1)} vs ${s.gaze.yaw.toFixed(1)}`);
 
-  // Never beyond the configured range, or the eyes leave their sockets. The
+  // Never beyond the configured range, or the iris leaves the eyeball. The
   // gain is overdriven here because that is the input that could push past it.
   s.params.gazeRange = 15;
   s.params.gazeGain = 6;
-  s.update(scores({ eyeLookUpLeft: 1, eyeLookUpRight: 1, eyeLookOutLeft: 1, eyeLookInRight: 1 }), false, DT, out);
+  settleGaze(s, scores({ eyeLookUpLeft: 1, eyeLookUpRight: 1, eyeLookOutLeft: 1, eyeLookInRight: 1 }));
   check("gain cannot drive gaze beyond its range",
     Math.abs(s.gaze.pitch) <= 15.001 && Math.abs(s.gaze.yaw) <= 15.001,
     `yaw ${s.gaze.yaw.toFixed(1)} pitch ${s.gaze.pitch.toFixed(1)}`);
@@ -210,20 +221,59 @@ const DT = 1 / 60;
   s.params.gazeGain = 1;
   // What a real glance reports: well short of 1, which is why gain exists.
   const faint = scores({ eyeLookOutLeft: 0.4, eyeLookInRight: 0.4 });
-  s.update(faint, false, DT, out);
+  settleGaze(s, faint);
   const plain = s.gaze.yaw;
 
   s.params.gazeGain = 2;
-  s.update(faint, false, DT, out);
+  settleGaze(s, faint);
   check("gain moves the eyes further for the same glance", s.gaze.yaw > plain * 1.5,
     `${plain.toFixed(1)} -> ${s.gaze.yaw.toFixed(1)}`);
 
   // Gain must not manufacture a direction out of a face looking straight on.
   s.params.gazeGain = 6;
-  s.update(scores({}), false, DT, out);
+  settleGaze(s, scores({}));
   check("gain leaves a centred gaze centred",
-    s.gaze.yaw === 0 && s.gaze.pitch === 0,
+    Math.abs(s.gaze.yaw) < 1e-6 && Math.abs(s.gaze.pitch) < 1e-6,
     `yaw ${s.gaze.yaw} pitch ${s.gaze.pitch}`);
+}
+
+// --- smoothing takes the tremor out without stalling the eyes -------------
+{
+  const s = new FaceSolver();
+  const glanceLeft = scores({ eyeLookOutLeft: 1, eyeLookInRight: 1 });
+
+  s.update(glanceLeft, false, DT, out);
+  const afterOne = s.gaze.yaw;
+  settleGaze(s, glanceLeft);
+  check("gaze eases rather than snapping",
+    afterOne > 0 && afterOne < s.gaze.yaw * 0.5,
+    `${afterOne.toFixed(2)} of ${s.gaze.yaw.toFixed(2)} after one frame`);
+  check("gaze still arrives", s.gaze.yaw > 9.9, `${s.gaze.yaw.toFixed(2)}`);
+
+  /*
+   * The point of the filter: a signal rattling between two values must not
+   * rattle the eyes. Averaged over the jitter, not following it.
+   */
+  const noisy = new FaceSolver();
+  const high = scores({ eyeLookOutLeft: 0.6, eyeLookInRight: 0.6 });
+  const low = scores({ eyeLookOutLeft: 0.3, eyeLookInRight: 0.3 });
+  for (let i = 0; i < 90; i++) noisy.update(i % 2 === 0 ? high : low, false, DT, out);
+  let swing = 0;
+  let previous = noisy.gaze.yaw;
+  for (let i = 0; i < 30; i++) {
+    noisy.update(i % 2 === 0 ? high : low, false, DT, out);
+    swing = Math.max(swing, Math.abs(noisy.gaze.yaw - previous));
+    previous = noisy.gaze.yaw;
+  }
+  // Unfiltered, alternating 0.6 and 0.3 at gain 2 would swing the full range.
+  check("alternating noise does not shake the eyes", swing < 1,
+    `${swing.toFixed(2)} degrees per frame`);
+
+  const instant = new FaceSolver();
+  instant.params.gazeSmoothing = 0;
+  instant.update(glanceLeft, false, DT, out);
+  check("zero smoothing arrives in one frame", instant.gaze.yaw > 9.9,
+    `${instant.gaze.yaw.toFixed(2)}`);
 }
 
 // --- emotion is never inferred -------------------------------------------

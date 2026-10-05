@@ -985,10 +985,11 @@ function wireFaceControls(panel: DebugPanel, face: FaceSolver): void {
   folder.add(face.params, "blinkLow", 0, 1, 0.01).name("eyes open below");
   folder.add(face.params, "blinkHigh", 0, 1, 0.01).name("eyes shut above");
   folder.add(face.params, "blinkSpeed", 0, 0.3, 0.01).name("lid travel (s)");
-  // Up to 90 only: the model's range map saturates there, so a higher number
-  // is a control that does nothing (see FaceParams.gazeRange).
-  folder.add(face.params, "gazeRange", 0, 90, 1).name("gaze range (deg)");
+  // Degrees the eyeball actually turns. Small: eye geometry is shallow and
+  // the iris slides off it well before any anatomical limit (FaceParams).
+  folder.add(face.params, "gazeRange", 0, 20, 0.5).name("gaze range (deg)");
   folder.add(face.params, "gazeGain", 1, 6, 0.1).name("gaze gain");
+  folder.add(face.params, "gazeSmoothing", 0, 0.4, 0.01).name("gaze smoothing (s)");
 }
 
 /**

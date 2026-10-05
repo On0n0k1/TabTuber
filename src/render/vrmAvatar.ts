@@ -38,6 +38,16 @@ const _BONE_NAMES_ARE_VALID: readonly VRMHumanBoneName[] = DRIVEN_BONES;
 void _BONE_NAMES_ARE_VALID;
 
 /** Expected subject height in metres, from the reference rig (SPEC.md 7.1.1). */
+/**
+ * Hard stop on eye rotation, in degrees.
+ *
+ * A guard, not the working range -- that is FaceParams.gazeRange, and it is
+ * smaller. Eye geometry is shallow, so a mis-set parameter slides the iris
+ * off the eyeball rather than producing a big expressive look, and that is
+ * ugly in a way nobody reads as a bug in a number.
+ */
+const MAX_EYE_DEGREES = 20;
+
 const EXPECTED_HEIGHT_M = 1.6;
 /** Beyond this ratio from expected, the model was probably authored wrong. */
 const HEIGHT_WARN_RATIO = 1.5;
@@ -70,6 +80,11 @@ export class VrmAvatar {
    * origin and sinks the model by its own hip height.
    */
   private readonly restHipPosition = new THREE.Vector3();
+
+  /** Degrees, positive to the model's left and up. Applied in update(). */
+  private readonly gaze = { yaw: 0, pitch: 0 };
+  private readonly eyeEuler = new THREE.Euler();
+  private readonly eyeQuat = new THREE.Quaternion();
 
   private constructor(vrm: VRM) {
     this.vrm = vrm;
@@ -204,21 +219,53 @@ export class VrmAvatar {
   }
 
   /**
-   * Aims the eyes, in degrees.
+   * Aims the eyes, in degrees: positive yaw to the model's left, positive
+   * pitch up.
    *
-   * Through lookAt rather than the eye bones directly: the model declares
-   * bone-based look-at, and its applier already knows the per-model limits on
-   * how far an eye may turn. Writing the bones by hand would discard that.
-   *
-   * autoUpdate is disabled because it is for following a target object in the
-   * scene; here the angles come from the camera.
+   * Stored rather than applied, because apply() writes every driven bone and
+   * the eyes are among them -- writing here would be overwritten by whichever
+   * of the two the caller happened to run second. applyGaze() does the work
+   * from update(), which is defined to run after apply().
    */
   setGaze(yawDegrees: number, pitchDegrees: number): void {
-    const lookAt = this.vrm.lookAt;
-    if (!lookAt) return;
-    lookAt.autoUpdate = false;
-    lookAt.yaw = yawDegrees;
-    lookAt.pitch = pitchDegrees;
+    this.gaze.yaw = THREE.MathUtils.clamp(yawDegrees, -MAX_EYE_DEGREES, MAX_EYE_DEGREES);
+    this.gaze.pitch = THREE.MathUtils.clamp(pitchDegrees, -MAX_EYE_DEGREES, MAX_EYE_DEGREES);
+  }
+
+  /**
+   * Turns both eyes by the same rotation.
+   *
+   * Not through `vrm.lookAt`, which was the first attempt. Its applier runs
+   * each eye through the model's own range maps, and those are asymmetric by
+   * design -- the reference avatar declares 12.5 degrees outward against 4.75
+   * inward -- so one gaze direction turns the two eyes by different amounts
+   * and they visibly drift apart. Writing one shared quaternion keeps them
+   * together, which is what reads as a pair of eyes.
+   *
+   * The pitch sign is inverted on the way in because these bones look along
+   * +Z, and a positive rotation about +X carries +Z toward -Y, which is down.
+   * `VRMLookAt` has the same property: its positive pitch feeds the range map
+   * named "up" and then rotates the eye down.
+   *
+   * Written to the NORMALISED bones, before `vrm.update()` copies them onto
+   * the raw rig. lookAt is left alone and never given a yaw or pitch, so its
+   * applier stops marking itself dirty after the first frame and never
+   * competes for these bones.
+   */
+  private applyGaze(): void {
+    const left = this.nodes[BONE_INDEX["leftEye"]];
+    const right = this.nodes[BONE_INDEX["rightEye"]];
+    if (!left && !right) return;
+
+    this.eyeEuler.set(
+      -THREE.MathUtils.DEG2RAD * this.gaze.pitch,
+      THREE.MathUtils.DEG2RAD * this.gaze.yaw,
+      0,
+      "YXZ",
+    );
+    this.eyeQuat.setFromEuler(this.eyeEuler);
+    left?.quaternion.copy(this.eyeQuat);
+    right?.quaternion.copy(this.eyeQuat);
   }
 
   /**
@@ -226,6 +273,9 @@ export class VrmAvatar {
    * pose onto the raw rig. Call once per rendered frame, after apply().
    */
   update(dt: number): void {
+    // After apply(), which writes the eye bones along with every other driven
+    // bone, and before vrm.update() copies the normalised rig onto the raw one.
+    this.applyGaze();
     this.vrm.update(dt);
   }
 

@@ -164,6 +164,21 @@ export type HumanBoneName = (typeof DRIVEN_BONES)[number];
 
 export const BONE_COUNT = DRIVEN_BONES.length;
 
+/**
+ * The 30 finger bones, for code that treats them as a group.
+ *
+ * Matched on the name because VRM's are regular, and because a hand-written
+ * second list of thirty names would be a second thing to keep in step.
+ */
+export const FINGER_BONES: ReadonlySet<HumanBoneName> = new Set(
+  DRIVEN_BONES.filter((b) => /Thumb|Index|Middle|Ring|Little/.test(b)),
+);
+
+/** True for a finger bone, which is absent on a mitten-handed model. */
+export function isFingerBone(bone: HumanBoneName): boolean {
+  return FINGER_BONES.has(bone);
+}
+
 /** Index of each bone within an AvatarPose rotation buffer. */
 export const BONE_INDEX: Readonly<Record<HumanBoneName, number>> =
   Object.freeze(

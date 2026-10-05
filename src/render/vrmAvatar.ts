@@ -24,6 +24,8 @@ import {
   BONE_INDEX,
   BONE_COUNT,
   DRIVEN_BONES,
+  FINGER_BONES,
+  isFingerBone,
   type AvatarPose,
   type HumanBoneName,
 } from "../types.ts";
@@ -126,13 +128,31 @@ export class VrmAvatar {
   ): VrmLoadWarning[] {
     const warnings: VrmLoadWarning[] = [];
 
-    if (missing.length > 0) {
-      // Worth surfacing rather than silently degrading: a missing bone drops
-      // its share of the rotation, so the avatar under-rotates in a way that
-      // reads as sluggish rather than broken.
+    /*
+     * Fingers are reported separately and briefly. A mitten-handed model has
+     * none of the thirty, which is an ordinary and harmless kind of model --
+     * naming them all would put five hundred characters of bone names in a
+     * banner and make an expected outcome read as a catastrophe. A missing
+     * body bone is the opposite: it drops its share of the rotation, so the
+     * avatar under-rotates in a way that reads as sluggish rather than
+     * broken, and that is worth surfacing in full.
+     */
+    const body = missing.filter((b) => !isFingerBone(b));
+    const fingers = missing.filter((b) => isFingerBone(b));
+
+    if (body.length > 0) {
       warnings.push({
         kind: "missing-bones",
-        message: `${missing.length} driven bone(s) absent: ${missing.join(", ")}`,
+        message: `${body.length} driven bone(s) absent: ${body.join(", ")}`,
+      });
+    }
+
+    if (fingers.length > 0) {
+      warnings.push({
+        kind: "missing-bones",
+        message: fingers.length === FINGER_BONES.size
+          ? "no finger bones; this model's hands stay at rest"
+          : `${fingers.length} of ${FINGER_BONES.size} finger bones absent`,
       });
     }
 

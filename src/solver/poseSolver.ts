@@ -106,6 +106,16 @@ export interface SolverOptions {
    * derivations can be compared directly.
    */
   useHandLandmarks: boolean;
+  /**
+   * Drive the 30 finger bones from the hand landmarks (SPEC.md 12, item 3).
+   *
+   * Off by default and experimental. Fingers make residual jitter MORE
+   * visible rather than less, because they give the eye more detail to notice
+   * wobble in, and their landmarks are the noisiest part of the hand. Whether
+   * that trade is worth it depends on the camera and how close the subject
+   * sits, so it is a choice rather than a default.
+   */
+  fingers: boolean;
   /** At or above this mean visibility a bone is fully driven (SPEC.md 5.7). */
   visibilityThreshold: number;
   /**
@@ -150,6 +160,7 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   maxTwistDegrees: 160,
   posture: "sitting",
   useHandLandmarks: true,
+  fingers: false,
   visibilityThreshold: 0.5,
   blendBand: 0.25,
   holdSeconds: 0.4,
@@ -248,6 +259,42 @@ const ARM: Record<Side, ArmLandmarks> = {
 };
 
 /** Weight at or above which a rotation is trusted enough to remember. */
+/**
+ * Each finger as landmark joints and the bones between them.
+ *
+ * The joints are one longer than the bones, because a bone is the segment
+ * between two joints. MediaPipe's names and VRM's disagree in two places and
+ * both are handled here rather than at every use: MediaPipe's PINKY is VRM's
+ * Little, and the thumb has a metacarpal where the others have an
+ * intermediate, which is a real anatomical difference rather than a naming
+ * one -- the thumb has one fewer joint past the palm.
+ */
+const FINGER_CHAINS: readonly {
+  readonly joints: readonly [number, number, number, number];
+  readonly bones: readonly [string, string, string];
+}[] = [
+  {
+    joints: [HAND.THUMB_CMC, HAND.THUMB_MCP, HAND.THUMB_IP, HAND.THUMB_TIP],
+    bones: ["ThumbMetacarpal", "ThumbProximal", "ThumbDistal"],
+  },
+  {
+    joints: [HAND.INDEX_MCP, HAND.INDEX_PIP, HAND.INDEX_DIP, HAND.INDEX_TIP],
+    bones: ["IndexProximal", "IndexIntermediate", "IndexDistal"],
+  },
+  {
+    joints: [HAND.MIDDLE_MCP, HAND.MIDDLE_PIP, HAND.MIDDLE_DIP, HAND.MIDDLE_TIP],
+    bones: ["MiddleProximal", "MiddleIntermediate", "MiddleDistal"],
+  },
+  {
+    joints: [HAND.RING_MCP, HAND.RING_PIP, HAND.RING_DIP, HAND.RING_TIP],
+    bones: ["RingProximal", "RingIntermediate", "RingDistal"],
+  },
+  {
+    joints: [HAND.PINKY_MCP, HAND.PINKY_PIP, HAND.PINKY_DIP, HAND.PINKY_TIP],
+    bones: ["LittleProximal", "LittleIntermediate", "LittleDistal"],
+  },
+];
+
 const TRUSTWORTHY = 0.9;
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
@@ -313,6 +360,10 @@ export class PoseSolver {
   private readonly pc = v3();
   private readonly sa = v3();
   private readonly sb = v3();
+  private readonly fa = v3();
+  private readonly fb = v3();
+  private readonly fDir = v3();
+  private readonly qFinger = quat();
   private readonly palmX = v3();
   private readonly palmY = v3();
   private readonly palmZ = v3();
@@ -632,6 +683,69 @@ export class PoseSolver {
 
     if (haveHand) {
       this.setBone(pose, handBone, this.qPalm, this.worldOf(lowerBone), handConfidence, dt);
+
+      /*
+       * After the hand, because every finger hangs off its world rotation,
+       * and only when the palm frame is real -- the pose backend's three
+       * knuckle estimates cannot say anything about a finger.
+       *
+       * palmX/Y/Z still describe this side here. unrollPalm rolls `qPalm`
+       * without touching them, and that roll maps palmZ to its own negation,
+       * which a projection does not care about.
+       */
+      if (this.options.fingers && hand && this.usePalmFrame(hand)) {
+        this.solveFingers(hand.world, pose, side, handConfidence, dt);
+      }
+    }
+  }
+
+  /**
+   * The 30 finger bones, from the 21 hand landmarks (SPEC.md 12, item 3).
+   *
+   * Each bone is the segment between two landmarks, turned into a world
+   * rotation the same way the arm bones are: the rotation that carries the
+   * bone's REST direction onto its measured one. Swing only, which for a
+   * finger is all there is -- a finger has no roll about its own axis, and
+   * two points could not recover one anyway.
+   *
+   * The rest direction comes from the HAND bone rather than from
+   * `restDirOf(fingerBone)`. Finger bones are not in the reference rig, so
+   * that would fall back to +X, which is right for the left hand and exactly
+   * backwards for the right. In the humanoid rest pose the fingers continue
+   * along the hand's own axis, so the hand's direction is both correct and
+   * the honest statement of why.
+   */
+  private solveFingers(
+    hand: Float32Array,
+    pose: AvatarPose,
+    side: Side,
+    confidence: number,
+    dt: number,
+  ): void {
+    const handBone = `${side}Hand` as HumanBoneName;
+    const rest = restDirOf(handBone);
+
+    for (const chain of FINGER_CHAINS) {
+      // Reset per finger: each one hangs off the hand, not off the last
+      // finger solved.
+      let parentWorld = this.worldOf(handBone);
+
+      for (let i = 0; i < chain.bones.length; i++) {
+        readPoint(this.fa, hand, chain.joints[i] as number);
+        readPoint(this.fb, hand, chain.joints[i + 1] as number);
+        sub(this.fDir, this.fb, this.fa);
+
+        // A collapsed segment is a landmark the tracker did not resolve, not
+        // a finger of zero length. Abandoning the rest of the chain leaves
+        // those bones to the gating path, which holds and decays them.
+        if (vectorLength(this.fDir) < 1e-6) break;
+        normalize(this.fDir, this.fDir);
+
+        const bone = `${side}${chain.bones[i]}` as HumanBoneName;
+        fromUnitVectors(this.qFinger, rest, this.fDir);
+        this.setBone(pose, bone, this.qFinger, parentWorld, confidence, dt);
+        parentWorld = this.worldOf(bone);
+      }
     }
   }
 

@@ -811,6 +811,14 @@ function wireSolverControls(
   folder.add(solver.options, "flipMinArea", 0, 0.5, 0.01).name("flip: min area");
   folder.add(solver.options, "flipHysteresis", 1, 10, 1).name("flip: frames");
   folder.add(solver.options, "useHandLandmarks").name("use palm frame");
+  /*
+   * Experimental (SPEC.md 12, item 3). Off by default because articulated
+   * fingers make residual jitter MORE visible rather than less -- they give
+   * the eye more detail to notice wobble in -- and finger landmarks are the
+   * noisiest part of the hand. Needs the palm frame above: the pose backend's
+   * three knuckle estimates cannot say anything about a finger.
+   */
+  folder.add(solver.options, "fingers").name("fingers (experimental)");
 
   // Degradation constants (SPEC.md 5.7). All provisional and only settleable
   // by watching a limb actually leave frame.

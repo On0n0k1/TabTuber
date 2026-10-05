@@ -302,6 +302,65 @@ function makeHand(side: "left" | "right", wristX: number, wristY: number): Float
 }
 
 /**
+ * Adds the fifteen finger joints that `makeHand` leaves at the origin.
+ *
+ * `curlDeg` bends every joint of every finger by that much, cumulatively down
+ * each chain, the way a closing hand does. Zero gives a flat hand with the
+ * fingers continuing along the hand's own axis -- which is the humanoid rest
+ * pose, and must therefore solve to identity.
+ *
+ * Flexion carries the fingertips toward the palm. The palm is the XZ plane
+ * here and faces -Y, so a curl rotates the finger axis from +X toward -Y,
+ * which is negative about Z on the left and positive on the right.
+ */
+function addFingers(h: Float32Array, side: "left" | "right", curlDeg = 0): Float32Array {
+  const s = side === "left" ? 1 : -1;
+  const sign = side === "left" ? -1 : 1;
+  const get = (i: number): [number, number, number] =>
+    [h[i * 3] ?? 0, h[i * 3 + 1] ?? 0, h[i * 3 + 2] ?? 0];
+  const set = (i: number, p: readonly [number, number, number]): void => {
+    h[i * 3] = p[0]; h[i * 3 + 1] = p[1]; h[i * 3 + 2] = p[2];
+  };
+
+  /** Lays a chain of segments out from `from`, bending by curlDeg each time. */
+  const chain = (from: number, joints: readonly number[], lengths: readonly number[]): void => {
+    let [x, y, z] = get(from);
+    const q = quat();
+    const dir = v3();
+    for (let i = 0; i < joints.length; i++) {
+      // Cumulative: a closing finger bends further at every joint along it.
+      setAxisAngle(q, [0, 0, 1], sign * (i + 1) * curlDeg * (Math.PI / 180));
+      rotateV3(dir, q, [s, 0, 0]);
+      x += dir[0] * (lengths[i] as number);
+      y += dir[1] * (lengths[i] as number);
+      z += dir[2] * (lengths[i] as number);
+      set(joints[i] as number, [x, y, z]);
+    }
+  };
+
+  chain(HAND.INDEX_MCP, [HAND.INDEX_PIP, HAND.INDEX_DIP, HAND.INDEX_TIP], [0.039, 0.023, 0.018]);
+  chain(HAND.MIDDLE_MCP, [HAND.MIDDLE_PIP, HAND.MIDDLE_DIP, HAND.MIDDLE_TIP], [0.043, 0.026, 0.019]);
+  chain(HAND.RING_MCP, [HAND.RING_PIP, HAND.RING_DIP, HAND.RING_TIP], [0.040, 0.025, 0.018]);
+  chain(HAND.PINKY_MCP, [HAND.PINKY_PIP, HAND.PINKY_DIP, HAND.PINKY_TIP], [0.031, 0.019, 0.017]);
+
+  // The thumb starts from the wrist, not from a knuckle, and keeps its own
+  // segment count: a metacarpal where the others have an intermediate.
+  set(HAND.THUMB_CMC, [(h[0] ?? 0) + 0.021 * s, h[1] ?? 0, 0.021]);
+  chain(HAND.THUMB_CMC, [HAND.THUMB_MCP, HAND.THUMB_IP, HAND.THUMB_TIP], [0.036, 0.031, 0.025]);
+  return h;
+}
+
+/** A hand with all 21 landmarks: palm from makeHand, fingers from addFingers. */
+function makeFullHand(
+  side: "left" | "right",
+  wristX: number,
+  wristY: number,
+  curlDeg = 0,
+): Float32Array {
+  return addFingers(makeHand(side, wristX, wristY), side, curlDeg);
+}
+
+/**
  * Wraps a hand's world landmarks with a projection consistent with them, so
  * the depth-flip detector sees agreeing evidence and stays inactive.
  *
@@ -920,6 +979,100 @@ check("gated: confidence drops below 1", pose.confidence < 1);
     check("an edge-on palm does not change the verdict", s.isDepthFlipped("left") === before);
   }
 }
+
+// --- fingers: off by default, and identity when off ------------------------
+/** Everything visible; the finger checks are about geometry, not gating. */
+const allVisible = new Float32Array(LANDMARK_COUNT).fill(1);
+
+/*
+ * makeSolver() rather than a bare PoseSolver, because idle breathing rides on
+ * top of every bone and would be read here as the solver inventing rotation.
+ * Using the bare constructor first put 33 degrees on a flat hand's fingers and
+ * looked exactly like a sign error in the rest direction.
+ */
+{
+  const solver = makeSolver();
+  const pose = createAvatarPose();
+  const hand = project(makeFullHand("left", 0.65, 1.4, 30));
+  for (let i = 0; i < 8; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: hand, right: null });
+
+  check("fingers are off by default", solver.options.fingers === false);
+  const fingers: HumanBoneName[] = [
+    "leftIndexProximal", "leftIndexIntermediate", "leftIndexDistal",
+    "leftThumbMetacarpal", "leftLittleDistal",
+  ];
+  // A curled hand must still leave them alone while the option is off.
+  check("an untracked finger stays at rest",
+    fingers.every((b) => angleOf(boneQuat(pose.rotations, b)) < 1e-3),
+    fingers.map((b) => angleOf(boneQuat(pose.rotations, b)).toFixed(3)).join(" "));
+}
+
+// --- a flat hand is the rest pose, so it must solve to identity ------------
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+  const hand = project(makeFullHand("left", 0.65, 1.4, 0));
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: hand, right: null });
+
+  /*
+   * The strongest assertion available: fingers lying along the hand's own
+   * axis ARE the humanoid rest pose, so anything else is the solver inventing
+   * rotation. It would also catch the rest direction being read from
+   * restDirOf(fingerBone), which falls back to +X -- right for the left hand
+   * and exactly backwards for the right.
+   */
+  const flat: HumanBoneName[] = [
+    "leftIndexProximal", "leftIndexIntermediate", "leftIndexDistal",
+    "leftMiddleProximal", "leftRingProximal", "leftLittleProximal",
+  ];
+  const worst = Math.max(...flat.map((b) => angleOf(boneQuat(pose.rotations, b))));
+  check("a flat hand solves its fingers to identity", worst < 0.5,
+    `${worst.toFixed(2)} degrees`);
+}
+
+// --- and the right hand too, which is where a sign error would show -------
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+  const hand = project(makeFullHand("right", -0.65, 1.4, 0));
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: null, right: hand });
+
+  const flat: HumanBoneName[] = [
+    "rightIndexProximal", "rightMiddleProximal", "rightLittleDistal",
+  ];
+  const worst = Math.max(...flat.map((b) => angleOf(boneQuat(pose.rotations, b))));
+  // Fails outright if the rest direction is taken as +X for both hands.
+  check("a flat right hand solves its fingers to identity", worst < 0.5,
+    `${worst.toFixed(2)} degrees`);
+}
+
+// --- a curled hand actually curls ------------------------------------------
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+  const hand = project(makeFullHand("left", 0.65, 1.4, 25));
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: hand, right: null });
+
+  const proximal = angleOf(boneQuat(pose.rotations, "leftIndexProximal"));
+  check("a curled finger bends at the knuckle", proximal > 15 && proximal < 35,
+    `${proximal.toFixed(1)} degrees, expected about 25`);
+
+  // The fixture bends each joint one increment further than the last, so the
+  // LOCAL rotations should come out roughly equal down the chain.
+  const middle = angleOf(boneQuat(pose.rotations, "leftIndexIntermediate"));
+  check("the next joint bends by about as much", middle > 15 && middle < 35,
+    `${middle.toFixed(1)} degrees`);
+
+  // The thumb has a metacarpal where the others have an intermediate. Driving
+  // it as though it were a finger would leave this bone at rest.
+  const thumb = angleOf(boneQuat(pose.rotations, "leftThumbMetacarpal"));
+  check("the thumb is driven through its metacarpal", thumb > 1,
+    `${thumb.toFixed(1)} degrees`);
+}
+
 
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);
 console.log("\nALL PASS");

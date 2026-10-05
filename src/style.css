@@ -9,6 +9,17 @@
   box-sizing: border-box;
 }
 
+/*
+ * How far the lil-gui panel reaches in from the right edge.
+ *
+ * Anything spanning the full width has to keep its content out of this, or it
+ * ends up underneath a panel that is always on top. Its own default width is
+ * 245px; the rest is the scrollbar and a margin.
+ */
+:root {
+  --panel-inset: 268px;
+}
+
 html,
 body {
   width: 100%;
@@ -51,9 +62,18 @@ body[data-bg="key"] {
   right: 0;
   z-index: 10;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 12px;
+  /*
+   * Inset on the right by the width of the debug panel. The bar spans the
+   * screen, but the panel is docked over its right end and sits above it, so
+   * content reaching that far is simply invisible -- which hid the dismiss
+   * button and, worse, hid the Retry on a camera error, leaving a blocking
+   * message whose only action could not be clicked.
+   */
   padding: 10px 16px;
+  padding-right: calc(var(--panel-inset) + 16px);
   font-size: 13px;
   line-height: 1.4;
 }
@@ -84,13 +104,13 @@ body[data-bg="key"] {
 }
 
 /*
- * Whichever button comes first is pushed to the far end; the rest follow it.
- * Written this way because a banner may carry an action and a dismiss, or
- * only a dismiss, and both have to sit right.
+ * Buttons sit directly after the message, NOT pushed to the far end.
+ *
+ * The banner spans the full width and the debug panel is docked over its
+ * right end, so anything pushed right lands underneath it -- which hid the
+ * dismiss button, and hid the Retry on a camera error, leaving a blocking
+ * message whose only action could not be clicked.
  */
-.banner button:first-of-type {
-  margin-left: auto;
-}
 
 /* Always present, so a message can never become unclosable. */
 .banner .banner-close {
@@ -310,7 +330,9 @@ body[data-bg="key"] {
  * and it fails silently.
  */
 body[data-banner] .latency {
-  top: 64px;
+  /* The banner measures itself; the fallback covers the one-line case if it
+     somehow has not reported yet. */
+  top: calc(var(--banner-height, 48px) + 12px);
 }
 
 /* Within the budget SPEC.md 9 sets for the whole chain. */

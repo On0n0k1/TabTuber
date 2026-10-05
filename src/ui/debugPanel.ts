@@ -191,8 +191,22 @@ export class DebugPanel {
     }
   }
 
-  /** Exposed so later stages can add their own folders without owning the GUI. */
+  /**
+   * The folder of this name, created on first use.
+   *
+   * Returning the existing one rather than adding a second is what stops the
+   * panel growing two folders with the same title, which it did: the Face
+   * readouts and the Face controls are added by different callers and each
+   * made its own. It was also silently breaking `collapseAllExcept`, since
+   * the map below is keyed by title and the second folder displaced the first
+   * -- leaving one of the two unreachable by name and permanently open.
+   *
+   * Exposed so later stages can add controls without owning the GUI.
+   */
   folder(name: string): GUI {
+    const existing = this.folders.get(name);
+    if (existing) return existing;
+
     const folder = this.gui.addFolder(name);
     this.folders.set(name, folder);
     return folder;

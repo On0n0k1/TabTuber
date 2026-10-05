@@ -115,6 +115,49 @@ export const DRIVEN_BONES = [
   "rightFoot",
   "leftEye",
   "rightEye",
+  /*
+   * Fingers (SPEC.md 12, item 3).
+   *
+   * Listed here rather than behind a condition because the pose is a flat
+   * buffer sized by BONE_COUNT: everything downstream -- interpolation, the
+   * lookahead ring, gating, the relaxed fallback -- loops over it and needs no
+   * change. Whether they are DRIVEN is a solver decision, and an untracked
+   * finger costs one slerp of identity a frame.
+   */
+  // left hand, 15 bones: the thumb carries a metacarpal where the
+  // others carry an intermediate.
+  "leftThumbMetacarpal",
+  "leftThumbProximal",
+  "leftThumbDistal",
+  "leftIndexProximal",
+  "leftIndexIntermediate",
+  "leftIndexDistal",
+  "leftMiddleProximal",
+  "leftMiddleIntermediate",
+  "leftMiddleDistal",
+  "leftRingProximal",
+  "leftRingIntermediate",
+  "leftRingDistal",
+  "leftLittleProximal",
+  "leftLittleIntermediate",
+  "leftLittleDistal",
+  // right hand, 15 bones: the thumb carries a metacarpal where the
+  // others carry an intermediate.
+  "rightThumbMetacarpal",
+  "rightThumbProximal",
+  "rightThumbDistal",
+  "rightIndexProximal",
+  "rightIndexIntermediate",
+  "rightIndexDistal",
+  "rightMiddleProximal",
+  "rightMiddleIntermediate",
+  "rightMiddleDistal",
+  "rightRingProximal",
+  "rightRingIntermediate",
+  "rightRingDistal",
+  "rightLittleProximal",
+  "rightLittleIntermediate",
+  "rightLittleDistal",
 ] as const;
 
 export type HumanBoneName = (typeof DRIVEN_BONES)[number];

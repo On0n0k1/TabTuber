@@ -95,6 +95,30 @@ export class PoseInterpolator {
     this.current.confidence +=
       (this.target.confidence - this.current.confidence) * alpha;
 
+    /*
+     * The timestamp eases with the pose it describes.
+     *
+     * It was simply not copied here, only in setTarget and snap(), and snap()
+     * runs only when interpolation is OFF -- so with the default settings
+     * `current.timestampMs` stayed at zero for the life of the page. That
+     * silently broke two things: the latency readout had nothing to measure
+     * from, and MicLevel.sampleAt(0) matches no entry and falls through to
+     * the OLDEST sample in its ring, so the mouth was being driven by energy
+     * up to half a second stale and the lookahead compensation in SPEC.md 6.1
+     * never did anything.
+     *
+     * Eased rather than copied, because the displayed pose lags the target by
+     * exactly this easing. Carrying the target's timestamp would claim the
+     * rendered pose is newer than it is, understating latency and
+     * re-introducing the misalignment this is here to remove.
+     */
+    this.current.timestampMs = this.current.timestampMs === 0
+      // First pose: easing up from zero would report a latency of however
+      // long the page had been open.
+      ? this.target.timestampMs
+      : this.current.timestampMs
+        + (this.target.timestampMs - this.current.timestampMs) * alpha;
+
     // Expressions are driven procedurally at render rate, so they are taken
     // as-is rather than eased a second time.
     for (const [k, v] of this.target.expressions) {

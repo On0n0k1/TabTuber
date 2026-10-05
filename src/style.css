@@ -116,3 +116,139 @@ body[data-bg="key"] {
   pointer-events: none;
   z-index: 6;
 }
+
+/*
+ * Performer toolbar, bottom CENTRE (SPEC.md 9.1).
+ *
+ * Captured by OBS along with the avatar, by decision: it is cropped out at
+ * the browser source rather than hidden here, so it never disappears at the
+ * moment it is wanted. It therefore has to be worth looking at, and it has to
+ * stay put -- a bar that moved would invalidate the crop.
+ *
+ * Bottom centre rather than bottom left, because the camera preview is
+ * already pinned to the left corner. On a narrow window the two can still
+ * meet, and the bar wins: it sits above the preview, which is a dev affordance
+ * with a toggle of its own.
+ */
+.toolbar {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid #3a3a44;
+  border-radius: 10px;
+  /* Translucent so it reads as an overlay on the avatar rather than a gap
+     cut out of it. */
+  background: rgb(20 20 26 / 0.84);
+  backdrop-filter: blur(8px);
+}
+
+.toolbar[hidden] {
+  display: none;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 22px;
+  margin: 0 5px;
+  background: #3a3a44;
+}
+
+.tool {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  /* Neither lit nor darkened: the resting state of a button whose icon is
+     carrying the information, which is the posture cycle. */
+  color: #d6d6de;
+  cursor: pointer;
+  transition: color 120ms, background-color 120ms, border-color 120ms;
+}
+
+.tool svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Off. Darkened rather than hidden, so the control is still findable. */
+.tool[data-on="false"] {
+  color: #5a5a66;
+}
+
+/* On. Colour alone is not enough on an icon this thin, so the lit state gets
+   a tinted plate and a ring as well -- it has to be obvious across a room. */
+.tool[data-on="true"] {
+  color: #7ec8ff;
+  border-color: rgb(126 200 255 / 0.45);
+  background: rgb(126 200 255 / 0.16);
+}
+
+.tool:hover {
+  color: #ffffff;
+  background: rgb(255 255 255 / 0.1);
+}
+
+.tool[data-on="true"]:hover {
+  color: #a8dbff;
+  background: rgb(126 200 255 / 0.24);
+}
+
+.tool:focus-visible {
+  outline: 2px solid #7ec8ff;
+  outline-offset: 2px;
+}
+
+/*
+ * One tooltip, moved between buttons. Positioned from the hovered button's
+ * offset inside the bar, so neither the viewport nor the bar's own position
+ * has to be measured.
+ */
+.toolbar-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: max-content;
+  max-width: 230px;
+  padding: 7px 10px;
+  border: 1px solid #3a3a44;
+  border-radius: 7px;
+  background: rgb(14 14 18 / 0.96);
+  font-size: 11px;
+  line-height: 1.45;
+  /* The pointer is over the button, never over this. */
+  pointer-events: none;
+}
+
+.toolbar-tip[hidden] {
+  display: none;
+}
+
+.toolbar-tip-label {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.toolbar-tip-text {
+  color: #a8a8b4;
+}
+
+.toolbar-tip-key {
+  color: #7ec8ff;
+}
+
+.toolbar-tip-key[hidden] {
+  display: none;
+}

@@ -65,6 +65,8 @@ import {
   writeSetting,
 } from "./ui/settings.ts";
 import { StatusBanner } from "./ui/statusBanner.ts";
+import type { IconName } from "./ui/icons.ts";
+import { Toolbar } from "./ui/toolbar.ts";
 
 type BackendName = "holistic" | "pose";
 type TrackerRegistry = Record<BackendName, () => Tracker>;
@@ -73,6 +75,23 @@ type TrackerRegistry = Record<BackendName, () => Tracker>;
 const DEFAULT_BACKEND: BackendName = "holistic";
 
 const POSTURES = ["sitting", "standing"] as const;
+
+/**
+ * Toolbar artwork and wording per expression.
+ *
+ * A Record rather than a list so the compiler requires every expression to
+ * have a button: adding a sixth preset to EXPRESSIONS should fail to build
+ * until it has an icon, not silently appear on the bar as a blank square or
+ * not appear at all. The hotkey is not here either -- it is the position in
+ * EXPRESSIONS, which is what ExpressionControl binds.
+ */
+const EXPRESSION_BUTTONS: Record<ExpressionName, { label: string; icon: IconName }> = {
+  happy: { label: "Happy", icon: "happy" },
+  angry: { label: "Angry", icon: "angry" },
+  sad: { label: "Sad", icon: "sad" },
+  relaxed: { label: "Relaxed", icon: "relaxed" },
+  surprised: { label: "Surprised", icon: "surprised" },
+};
 /** Most use is at a desk, and it is the framing that needs no leg data. */
 const DEFAULT_POSTURE: PostureMode = "sitting";
 
@@ -113,6 +132,15 @@ function boot(): void {
   );
 
   const host = new TrackerHost();
+  /*
+   * Rebuilding is how a face-blendshape change takes effect: the delegate is
+   * chosen when the graph is built, so the flag cannot be flipped on a tracker
+   * that is already running (see HolisticTrackerOptions).
+   */
+  const rebuildTracker = (): void => {
+    const factory = trackers[backendNames.includes("holistic") ? "holistic" : "pose"];
+    void host.use("holistic", factory);
+  };
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
 
@@ -131,6 +159,20 @@ function boot(): void {
   const interpolator = new PoseInterpolator();
   const blink = new Blink();
   const mic = new MicLevel();
+  /*
+   * The microphone switch lives here rather than in either surface showing
+   * it. The toolbar is its only control, but the persisted setting outlives
+   * any widget, and starting the microphone has to wait until the lip sync
+   * wiring has registered the handler that turns a permission failure into a
+   * banner.
+   */
+  let micEnabled = readSetting<"on" | "off">("lipsync", ["on", "off"], "off") === "on";
+  const applyMic = (on: boolean): void => {
+    micEnabled = on;
+    writeSetting("lipsync", on ? "on" : "off");
+    if (on) void mic.start();
+    else mic.stop();
+  };
   const mouth = new Mouth();
   const faceSolver = new FaceSolver();
   const expressions = new ExpressionControl();
@@ -306,15 +348,14 @@ function boot(): void {
   ], 2);
 
   wireExpressionControls(panel, expressions);
-  wireFaceControls(panel, faceSolver, trackerConfig, () => {
-    const factory = trackers[backendNames.includes("holistic") ? "holistic" : "pose"];
-    void host.use("holistic", factory);
-  });
+  wireFaceControls(panel, faceSolver);
   wireLipSync(panel, banner, mic, mouth, calibrator, () => {
     calibration = null;
     vowelRefs = null;
     console.info("vowels: calibration forgotten");
   });
+  // After wireLipSync, so a permission failure has a banner handler to land in.
+  if (micEnabled) applyMic(true);
   wireTrackingReadouts(panel, solver);
   // Visible so a correction is something you can see happening rather than
   // infer from the avatar looking right.
@@ -346,7 +387,81 @@ function boot(): void {
     filter.cutoffScale[LM.RIGHT_HIP] = hipScale;
   };
   applyPosture(solver.options.posture);
-  wirePostureControl(panel, applyPosture, solver.options.posture);
+  const setPosture = (posture: PostureMode): void => {
+    writeSetting("posture", posture);
+    applyPosture(posture);
+  };
+
+  /*
+   * The performer surface (SPEC.md 9.1).
+   *
+   * Everything on it was in the debug panel and has been moved out rather
+   * than duplicated into both. Two widgets over one piece of state is how
+   * they end up disagreeing about it, and the panel keeps the hundred
+   * controls that are set once.
+   */
+  const toolbar = new Toolbar(ui, [
+    {
+      kind: "toggle",
+      label: "Microphone",
+      tip: "Drives the mouth from your voice. Nothing is recorded or sent anywhere.",
+      icon: "mic",
+      iconOff: "micOff",
+      get: () => micEnabled,
+      set: applyMic,
+    },
+    {
+      kind: "toggle",
+      label: "Face tracking",
+      // Said plainly, because it is not free: the hitch on toggling it would
+      // otherwise look like a fault.
+      tip: "Blink and gaze from the camera. Rebuilds the tracker and puts the whole pipeline on the CPU, so expect a pause and a lower frame rate.",
+      icon: "face",
+      iconOff: "faceOff",
+      get: () => trackerConfig.faceBlendshapes,
+      set: (on: boolean) => {
+        trackerConfig.faceBlendshapes = on;
+        rebuildTracker();
+      },
+    },
+    {
+      /*
+       * Posture is a manual choice, not a detected one (SPEC.md 5.8).
+       * Detecting it would mean reading leg visibility, but the tracker
+       * reports confident visibility for hallucinated out-of-frame legs --
+       * the exact failure being worked around -- so deciding with that signal
+       * is circular.
+       */
+      kind: "cycle",
+      label: "Posture",
+      tip: "Sitting ignores the legs and frames the upper body. Standing tracks the whole figure.",
+      states: [
+        { value: "sitting", label: "sitting", icon: "sitting" },
+        { value: "standing", label: "standing", icon: "standing" },
+      ],
+      get: () => solver.options.posture,
+      set: (value: string) => setPosture(value as PostureMode),
+    },
+    "divider",
+    {
+      kind: "group",
+      // Neutral is a real answer, so clicking the lit expression returns to
+      // it rather than needing a sixth button for it.
+      allowNone: true,
+      // Order and hotkeys come from EXPRESSIONS, which is what the keys are
+      // bound to, so the bar cannot disagree with the keyboard about which
+      // number is which expression.
+      options: EXPRESSIONS.map((name: ExpressionName, i: number) => ({
+        value: name,
+        label: EXPRESSION_BUTTONS[name].label,
+        tip: "Click again for neutral.",
+        key: String(i + 1),
+        icon: EXPRESSION_BUTTONS[name].icon,
+      })),
+      get: () => expressions.active,
+      set: (value: string | null) => expressions.set(value as ExpressionName | null),
+    },
+  ]);
 
   camera.onStateChange((s) => {
     switch (s.kind) {
@@ -396,7 +511,9 @@ function boot(): void {
     );
   });
 
-  panel.collapseAllExcept(["Session", "Stats", "Lip sync", "View"]);
+  // Lip sync no longer needs to be open: the switch that went unnoticed in it
+  // is on the toolbar now.
+  panel.collapseAllExcept(["Session", "Stats", "View"]);
 
   // Started once, not per camera-ready: the video element is stable across
   // restarts, so starting a chain per state change would leave the old one
@@ -462,6 +579,11 @@ function boot(): void {
     // Last of the expression writers, so a chosen expression wins over
     // anything the camera or microphone put on the face.
     expressions.update(dt, interpolator.current.expressions);
+
+    // Pull-based, like the panel readouts: an expression may have been set by
+    // a number key, so the bar reads its own state rather than every owner
+    // having to announce a change.
+    toolbar.render();
 
     if (calibrator.running) banner.show("info", calibrationMessage(calibrator));
 
@@ -701,26 +823,6 @@ function makeHandFilter(): LandmarkFilter {
  * fallback. Makes an asymmetry between limbs a number you can read rather
  * than a behaviour you have to interpret.
  */
-/**
- * Posture is a manual choice, not a detected one (SPEC.md 5.8). Detecting it
- * would mean reading leg visibility, but the tracker reports confident
- * visibility for hallucinated out-of-frame legs -- the exact failure being
- * worked around -- so deciding with that signal is circular.
- */
-function wirePostureControl(
-  panel: DebugPanel,
-  apply: (posture: PostureMode) => void,
-  initial: PostureMode,
-): void {
-  const folder = panel.folder("Posture");
-  const proxy = { posture: initial };
-  folder.add(proxy, "posture", [...POSTURES]).onChange((value: string) => {
-    const posture = value as PostureMode;
-    writeSetting("posture", posture);
-    apply(posture);
-  });
-}
-
 function wireTrackingReadouts(panel: DebugPanel, solver: PoseSolver): void {
   const bones: HumanBoneName[] = [
     "head",
@@ -813,17 +915,8 @@ function wireLipSync(
     else if (s.kind === "on") banner.hide();
   });
 
-  const proxy = {
-    enabled: readSetting<"on" | "off">("lipsync", ["on", "off"], "off") === "on",
-  };
-  const apply = (on: boolean): void => {
-    writeSetting("lipsync", on ? "on" : "off");
-    if (on) void mic.start();
-    else mic.stop();
-  };
-  folder.add(proxy, "enabled").name("microphone").onChange(apply);
-  if (proxy.enabled) apply(true);
-
+  // Switching the microphone on is on the toolbar; everything here is how it
+  // behaves once it is on.
   // The browser's own noise cancelling, applied live rather than on restart.
   // Suppression targets steady noise; transients still need the duration gate.
   const processing = folder.addFolder("Noise cancelling");
@@ -870,24 +963,15 @@ function wireLipSync(
  * Blink and gaze only. Emotion was a guess and is now chosen by hand
  * (SPEC.md 13.2), so it lives in its own folder.
  */
-function wireFaceControls(
-  panel: DebugPanel,
-  face: FaceSolver,
-  trackerConfig: { faceBlendshapes: boolean },
-  rebuild: () => void,
-): void {
+function wireFaceControls(panel: DebugPanel, face: FaceSolver): void {
   const folder = panel.folder("Face");
 
   /*
-   * Separate from `enabled` on purpose. This one changes what the tracker
-   * produces and costs the GPU delegate for the entire pipeline, so it
-   * rebuilds; `enabled` only changes what is done with the result.
+   * Whether the tracker PRODUCES blendshapes is on the toolbar, not here: it
+   * rebuilds the tracker and costs the GPU delegate for the whole pipeline,
+   * which makes it something to switch off mid-stream when the frame rate
+   * matters. What is left is what is done with the result, all of it free.
    */
-  folder
-    .add(trackerConfig, "faceBlendshapes")
-    .name("track face (CPU only)")
-    .onChange(rebuild);
-
   folder.add(face.params, "enabled").name("apply to avatar");
   folder.add(face.params, "trackBlink").name("blink from camera");
   folder.add(face.params, "trackGaze").name("gaze from camera");
@@ -899,26 +983,16 @@ function wireFaceControls(
 }
 
 /**
- * Buttons and keys for the emotion presets (SPEC.md 13.2).
+ * How the emotion presets behave, not which one is showing (SPEC.md 13.2).
  *
- * Buttons as well as keys because the keys are undiscoverable, and keys as
- * well as buttons because the panel is unreachable once a stream is running.
+ * Choosing one is a performance decision and lives on the toolbar, where it
+ * can be reached mid-stream. What stays here is the pair of settings nobody
+ * touches twice.
  */
 function wireExpressionControls(panel: DebugPanel, expressions: ExpressionControl): void {
   const folder = panel.folder("Expression");
-
   folder.add(expressions.params, "hotkeys").name("number keys (1-5)");
   folder.add(expressions.params, "fade", 0, 1, 0.01).name("fade (s)");
-
-  // One button per preset, each a toggle, so pressing the active one returns
-  // to neutral without hunting for a separate control.
-  const actions: Record<string, () => void> = {};
-  EXPRESSIONS.forEach((name: ExpressionName, i: number) => {
-    actions[name] = () => expressions.set(name);
-    folder.add(actions, name).name(`${i + 1}  ${name}`);
-  });
-  actions.neutral = () => expressions.set(null);
-  folder.add(actions, "neutral").name("0  neutral");
 }
 
 function wireMotionControls(

@@ -252,3 +252,70 @@ body[data-bg="key"] {
 .toolbar-tip-key[hidden] {
   display: none;
 }
+
+/*
+ * Latency readout, top LEFT (SPEC.md 9.2).
+ *
+ * Left because the debug panel is docked right and would cover it. It sits
+ * under the banner rather than beside it: the banner is for blocking
+ * conditions, and when one is up, latency is not what the reader needs.
+ */
+.latency {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 9px;
+  border: 1px solid #3a3a44;
+  border-radius: 6px;
+  background: rgb(20 20 26 / 0.78);
+  font-size: 12px;
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.latency[hidden] {
+  display: none;
+}
+
+/*
+ * Out from under the banner while one is up.
+ *
+ * The banner is full width at the top with a higher z-index, so without this
+ * the readout disappears behind it -- and it disappears exactly when
+ * something has gone wrong, which is when a number is most worth having. Done
+ * in CSS so neither element has to know about the other.
+ */
+body:has(.banner:not([hidden])) .latency {
+  top: 64px;
+}
+
+/* Within the budget SPEC.md 9 sets for the whole chain. */
+.latency[data-state="ok"] .latency-value {
+  color: #7fd98c;
+}
+
+.latency[data-state="warn"] .latency-value {
+  color: #e5c15c;
+}
+
+.latency[data-state="bad"] .latency-value {
+  color: #f08a8a;
+}
+
+.latency[data-state="idle"] .latency-value {
+  color: #6b6b78;
+}
+
+.latency-note {
+  color: #8a8a96;
+  font-size: 10px;
+}
+
+.latency-note[hidden] {
+  display: none;
+}

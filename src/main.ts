@@ -56,6 +56,7 @@ import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.t
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
 import { FpsMeter } from "./ui/fpsMeter.ts";
+import { LatencyHud } from "./ui/latencyHud.ts";
 import {
   clearAllSettings,
   clearSetting,
@@ -143,6 +144,30 @@ function boot(): void {
   };
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
+  const latencyHud = new LatencyHud(ui);
+
+  /*
+   * Capture to render, in ms (SPEC.md 9.2).
+   *
+   * Three terms. The camera's own delay, which the tracker measures because
+   * nothing downstream can see it; the age of the pose being rendered, which
+   * covers inference, solving and the lookahead buffer in one, since the pose
+   * carries the timestamp of the frame it came from; and nothing else, because
+   * the remaining term is OBS's encode and this page cannot observe it.
+   *
+   * So it is a floor, not the whole chain. The readout says as much when the
+   * browser will not report the camera's share.
+   */
+  const latency = (): { ms: number; partial: boolean } => {
+    const stamp = interpolator.current.timestampMs;
+    if (stamp <= 0) return { ms: 0, partial: false };
+
+    const captureDelay = host.current?.captureDelayMs ?? 0;
+    return {
+      ms: performance.now() - stamp + captureDelay,
+      partial: captureDelay === 0,
+    };
+  };
 
   const stickFigure = new StickFigure();
   stage.scene.add(stickFigure.object);
@@ -255,6 +280,7 @@ function boot(): void {
       cameraFps: cameraFps.staleAfter(1000),
       trackerFps: trackerFps.staleAfter(1000),
       inferenceMs: host.current?.inferenceMs ?? 0,
+      latencyMs: latency().ms,
       lookaheadMs: poseBuffer.latencyMs,
       delegate: host.current?.ready ? host.current.delegate : "-",
       backend: host.current?.name ?? "-",
@@ -336,6 +362,7 @@ function boot(): void {
   // reference for whether a fault is in the mapping or the solver.
   panel.addViewToggle("debugRig", true, (v) => debugRig.setVisible(v));
   panel.addViewToggle("avatar", true, (v) => avatarSlot.setVisible(v));
+  panel.addViewToggle("latency", true, (v) => latencyHud.setVisible(v));
   panel.addViewToggle("mirror", view.mirror, (v) => {
     view.mirror = v;
   });
@@ -598,6 +625,9 @@ function boot(): void {
     // a number key, so the bar reads its own state rather than every owner
     // having to announce a change.
     toolbar.render();
+
+    const { ms, partial } = latency();
+    latencyHud.update(ms, partial);
 
     if (calibrator.running) banner.show("info", calibrationMessage(calibrator));
 

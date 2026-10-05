@@ -29,6 +29,17 @@ export interface Tracker {
   readonly delegate: TrackerDelegate;
   /** Inference time only -- not end-to-end pipeline latency. */
   readonly inferenceMs: number;
+  /**
+   * Camera sensor to frame callback, in ms, or 0 when the browser will not
+   * say.
+   *
+   * The part of the chain nothing downstream can see. A PoseFrame is stamped
+   * when the callback runs, so measuring from that stamp misses everything
+   * the camera and the browser did before handing the frame over -- which on
+   * a USB webcam is tens of milliseconds and the single largest term
+   * (SPEC.md 9.2).
+   */
+  readonly captureDelayMs: number;
   /** Set when inference failed fatally; tracking has stopped. */
   readonly lastError: string | null;
   init(): Promise<void>;
@@ -64,6 +75,7 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
 
   private delegateInUse: TrackerDelegate = "GPU";
   private lastInferenceMs = 0;
+  private lastCaptureDelayMs = 0;
   private failure: string | null = null;
   /** detectForVideo rejects non-monotonic timestamps, and a paused or looped
    *  video can repeat one, so the last value is tracked and nudged past. */
@@ -89,6 +101,10 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
 
   get inferenceMs(): number {
     return this.lastInferenceMs;
+  }
+
+  get captureDelayMs(): number {
+    return this.lastCaptureDelayMs;
   }
 
   get lastError(): string | null {
@@ -132,10 +148,30 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
     this.handle = null;
   }
 
-  private readonly step = (now: DOMHighResTimeStamp): void => {
+  private readonly step = (
+    now: DOMHighResTimeStamp,
+    metadata?: VideoFrameCallbackMetadata,
+  ): void => {
     const video = this.video;
     const landmarker = this.landmarker;
     if (!video || !landmarker) return;
+
+    /*
+     * `captureTime` shares performance.now()'s timebase and is populated for
+     * camera sources, which is what this always is. Smoothed because it is a
+     * property of the device rather than of the frame, and a per-frame value
+     * jitters by more than it varies.
+     *
+     * Absent on browsers that do not supply it, in which case the latency
+     * readout says so rather than quietly reporting a smaller number.
+     */
+    const captureTime = metadata?.captureTime;
+    if (captureTime !== undefined) {
+      const delay = Math.max(0, now - captureTime);
+      this.lastCaptureDelayMs = this.lastCaptureDelayMs === 0
+        ? delay
+        : this.lastCaptureDelayMs + (delay - this.lastCaptureDelayMs) * 0.1;
+    }
 
     // Zero dimensions happen briefly on device switches; inferring on that
     // throws inside wasm rather than returning an empty result.

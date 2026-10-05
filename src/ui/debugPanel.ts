@@ -11,7 +11,7 @@
  */
 
 import GUI from "lil-gui";
-import type { Camera, CameraDevice } from "../capture/camera.ts";
+import type { Camera } from "../capture/camera.ts";
 import type { Stage } from "../render/stage.ts";
 
 export type BackgroundMode = "checker" | "key" | "transparent";
@@ -135,30 +135,18 @@ export class DebugPanel {
       this.camera.element.style.display = v ? "" : "none";
     });
 
-    // The device list is its own signal now; the panel is the only thing that
-    // cared about it, and routing it through the camera state made every
-    // other listener re-handle a transition that never happened.
-    this.camera.onDevicesChanged(() => void this.refreshDevices());
-
     this.camera.onStateChange((s) => {
       if (s.kind === "ready") {
         this.readouts.resolution = `${s.width}x${s.height}`;
-        void this.refreshDevices();
+        // Taken from the stream rather than guessed from the device list, so
+        // `restart` restarts the camera that is actually running. The first
+        // start names no device and lets the browser choose, and its choice
+        // is not reliably the first one enumerated.
+        this.selectedDeviceId = s.deviceId;
       } else if (s.kind !== "requesting") {
         this.readouts.resolution = "-";
       }
     });
-  }
-
-  /**
-   * Remembers which camera is in use, so `restart` restarts that one.
-   *
-   * The picker itself is in the setup sheet; this only has to know what was
-   * chosen there, which the camera reports when it becomes ready.
-   */
-  private async refreshDevices(): Promise<void> {
-    const devices: CameraDevice[] = await this.camera.listDevices();
-    this.selectedDeviceId ||= devices[0]?.deviceId ?? "";
   }
 
   /** Call once per rendered frame. */

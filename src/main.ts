@@ -452,6 +452,7 @@ function boot(): void {
   const setup = new SetupSheet(ui, {
     models: MODELS,
     listCameras: () => camera.listDevices(),
+    currentCamera: () => (camera.state.kind === "ready" ? camera.state.deviceId : ""),
     onCamera: (deviceId) => void camera.start(deviceId),
     onModel: (url, label) => void avatarSlot.load(url, label),
     onUpload: (buffer, name) => void avatarSlot.load(buffer, name),

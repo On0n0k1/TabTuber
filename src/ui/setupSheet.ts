@@ -20,6 +20,15 @@ export interface ModelChoice {
 export interface SetupSheetOptions {
   readonly models: readonly ModelChoice[];
   readonly listCameras: () => Promise<readonly { deviceId: string; label: string }[]>;
+  /**
+   * The camera actually running, or "" if none is.
+   *
+   * Asked for rather than assumed. The first start names no device and lets
+   * the browser choose, and its choice is not reliably the first one
+   * enumerated -- selecting the first entry showed one camera in the picker
+   * while a different one was feeding the tracker.
+   */
+  readonly currentCamera: () => string;
   readonly onCamera: (deviceId: string) => void;
   readonly onModel: (url: string, label: string) => void;
   readonly onUpload: (buffer: ArrayBuffer, name: string) => void;
@@ -50,6 +59,9 @@ export class SetupSheet {
 
     this.cameraSelect = this.addSelect("Camera", []);
     this.cameraSelect.addEventListener("change", () => {
+      // The placeholder is not a device; selecting it would ask for a camera
+      // named "" and restart whatever the browser feels like.
+      if (this.cameraSelect.value === "") return;
       opts.onCamera(this.cameraSelect.value);
     });
 
@@ -134,7 +146,6 @@ export class SetupSheet {
 
   private async refreshCameras(): Promise<void> {
     const devices = await this.opts.listCameras();
-    const current = this.cameraSelect.value;
     this.cameraSelect.replaceChildren();
     for (const d of devices) {
       const option = document.createElement("option");
@@ -142,7 +153,24 @@ export class SetupSheet {
       option.textContent = d.label;
       this.cameraSelect.append(option);
     }
-    if (devices.some((d) => d.deviceId === current)) this.cameraSelect.value = current;
+
+    const running = this.opts.currentCamera();
+    if (devices.some((d) => d.deviceId === running)) {
+      this.cameraSelect.value = running;
+      return;
+    }
+
+    /*
+     * The browser would not say which device it chose. Rather than point at
+     * the first one and be confidently wrong, the picker says nothing is
+     * selected -- choosing an entry then starts that camera explicitly and
+     * the question stops being open.
+     */
+    const unknown = document.createElement("option");
+    unknown.value = "";
+    unknown.textContent = devices.length === 0 ? "no camera found" : "(current camera unknown)";
+    this.cameraSelect.prepend(unknown);
+    this.cameraSelect.value = "";
   }
 
   /** Reflects a model chosen by other means, so the sheet cannot disagree. */

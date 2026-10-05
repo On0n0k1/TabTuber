@@ -36,6 +36,20 @@ export type CameraState =
   | {
       readonly kind: "ready";
       readonly video: HTMLVideoElement;
+      /**
+       * The device actually in use, which is not necessarily the one asked
+       * for.
+       *
+       * The first start asks for no device at all and lets the browser
+       * choose, so anything wanting to show or restart the current camera has
+       * to be told which one that turned out to be. Assuming it is the first
+       * entry of `listDevices()` is wrong whenever the browser's default is
+       * not first -- which is how a picker came to display one camera while
+       * another was running, and how `restart` came to restart the wrong one.
+       *
+       * Empty if the browser will not report it.
+       */
+      readonly deviceId: string;
       readonly label: string;
       readonly width: number;
       readonly height: number;
@@ -173,6 +187,7 @@ export class Camera {
       this.setState({
         kind: "ready",
         video: this.video,
+        deviceId: settings.deviceId ?? "",
         label: track?.label ?? "camera",
         width: settings.width ?? this.video.videoWidth,
         height: settings.height ?? this.video.videoHeight,

@@ -323,7 +323,15 @@ function boot(): void {
   });
 
   panel.addViewToggle("landmarks", true, (v) => overlay.setVisible(v));
-  panel.addViewToggle("stickFigure", true, (v) => stickFigure.setVisible(v));
+  /*
+   * Off by default, like the rig. It is ground truth for the solver -- what
+   * the tracker reported, before any avatar mapping -- which made it worth
+   * having on screen while the solver was being built and makes it clutter
+   * beside a working avatar. It sits off to one side (see
+   * applyCompareOffset), so leaving it on also means the scene opens with
+   * two figures in it when the user asked for one.
+   */
+  panel.addViewToggle("stickFigure", false, (v) => stickFigure.setVisible(v));
   // Off by default once an avatar loads; the rig stays one click away as the
   // reference for whether a fault is in the mapping or the solver.
   panel.addViewToggle("debugRig", true, (v) => debugRig.setVisible(v));

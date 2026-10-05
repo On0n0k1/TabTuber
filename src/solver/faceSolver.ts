@@ -7,12 +7,13 @@
  * and eye direction, and the avatar has a matching expression and a matching
  * pair of eye bones. Nothing is being decided.
  *
- * EMOTIONS are not measured, they are CLASSIFIED. Something has to decide
- * that a smile plus a cheek squint means `happy` at some weight, and that is
- * a judgement which can be wrong in a way a measurement cannot. It is where
- * this kind of system usually looks bad -- the avatar committing to an
- * expression the performer was not making -- so it is off by default, gated
- * conservatively, and smoothed hard.
+ * EMOTIONS ARE NOT HERE. Inferring them was tried and removed: it has to
+ * decide that a smile plus a cheek squint means `happy` at some weight, and
+ * that judgement is wrong often enough that an avatar committing to an
+ * expression the performer was not making reads worse than one staying
+ * neutral. It is also the wrong model of what an expression is for a
+ * performer -- a chosen beat rather than a fact about their face -- so it
+ * moved to manual control; see ExpressionControl.
  *
  * The mouth is deliberately absent: the microphone keeps it (SPEC.md 13.3).
  * Visual visemes are the noisiest part of a face model and lip sync is what
@@ -28,11 +29,6 @@ export interface FaceParams {
   trackBlink: boolean;
   /** Drive eye direction from the camera. */
   trackGaze: boolean;
-  /**
-   * Infer the five emotion presets. Off by default: unlike blink and gaze
-   * this is a guess, and a confident wrong expression reads worse than none.
-   */
-  inferEmotion: boolean;
   /**
    * Treat blinking as open-or-shut rather than a continuous amount.
    *
@@ -71,24 +67,17 @@ export interface FaceParams {
   blinkHigh: number;
   /** Degrees of eye rotation at full deflection. */
   gazeRange: number;
-  /** Emotion weights below this are treated as zero, to avoid twitching. */
-  emotionFloor: number;
-  /** Seconds for emotions to follow. Long: expressions do not flicker. */
-  emotionSmoothing: number;
 }
 
 export const DEFAULT_FACE_PARAMS: FaceParams = {
   enabled: true,
   trackBlink: true,
   trackGaze: true,
-  inferEmotion: false,
   blinkSnap: true,
   blinkSpeed: 0.06,
   blinkLow: 0.15,
   blinkHigh: 0.55,
   gazeRange: 18,
-  emotionFloor: 0.25,
-  emotionSmoothing: 0.35,
 };
 
 export interface GazeAngles {
@@ -97,9 +86,6 @@ export interface GazeAngles {
   /** Degrees, positive up. */
   pitch: number;
 }
-
-const EMOTIONS = ["happy", "angry", "sad", "relaxed", "surprised"] as const;
-type Emotion = (typeof EMOTIONS)[number];
 
 export class FaceSolver {
   params: FaceParams = { ...DEFAULT_FACE_PARAMS };
@@ -111,10 +97,6 @@ export class FaceSolver {
   /** Latched open/shut state per eye, and the eyelid's travel toward it. */
   private readonly shut = { left: false, right: false };
   private readonly lid = { left: 0, right: 0 };
-  /** Smoothed emotion weights, so a flicker in the scores is not a flicker on the face. */
-  private readonly emotion: Record<Emotion, number> = {
-    happy: 0, angry: 0, sad: 0, relaxed: 0, surprised: 0,
-  };
 
   /** True while blink is being driven from the camera rather than the timer. */
   get drivingBlink(): boolean {
@@ -157,15 +139,6 @@ export class FaceSolver {
       // combination is what carries horizontal direction.
       this.gaze.yaw = (inward - outward) * range * (mirrored ? -1 : 1);
       this.gaze.pitch = (up - down) * range;
-    }
-
-    if (this.params.inferEmotion) {
-      this.updateEmotions(scores, dt, out);
-    } else {
-      for (const e of EMOTIONS) {
-        this.emotion[e] = 0;
-        out.set(e, 0);
-      }
     }
   }
 
@@ -214,51 +187,9 @@ export class FaceSolver {
     if (blinkHigh <= blinkLow) return value;
     return Math.min(1, Math.max(0, (value - blinkLow) / (blinkHigh - blinkLow)));
   }
-
-  /**
-   * Infers the five presets from blendshape combinations.
-   *
-   * Each is a guess, so three things guard it: only the strongest emotion is
-   * expressed at a time, since a face showing happy and sad together reads as
-   * broken; anything below a floor is dropped rather than twitching; and the
-   * result is smoothed over hundreds of milliseconds, because real
-   * expressions do not change in one frame.
-   */
-  private updateEmotions(scores: Float32Array, dt: number, out: Map<string, number>): void {
-    const smile = avg(shape(scores, "mouthSmileLeft"), shape(scores, "mouthSmileRight"));
-    const frown = avg(shape(scores, "mouthFrownLeft"), shape(scores, "mouthFrownRight"));
-    const browDown = avg(shape(scores, "browDownLeft"), shape(scores, "browDownRight"));
-    const browUp = shape(scores, "browInnerUp");
-    const squint = avg(shape(scores, "eyeSquintLeft"), shape(scores, "eyeSquintRight"));
-    const wide = avg(shape(scores, "eyeWideLeft"), shape(scores, "eyeWideRight"));
-    const jaw = shape(scores, "jawOpen");
-
-    const raw: Record<Emotion, number> = {
-      // A smile with squinting eyes; the squint is what separates a genuine
-      // smile from a mouth shape made while speaking.
-      happy: smile * (0.6 + 0.4 * squint),
-      angry: browDown * (0.5 + 0.5 * squint),
-      sad: frown * (0.5 + 0.5 * browUp),
-      relaxed: 0,
-      surprised: wide * browUp * (0.5 + 0.5 * jaw),
-    };
-
-    let best: Emotion = "happy";
-    for (const e of EMOTIONS) if (raw[e] > raw[best]) best = e;
-
-    for (const e of EMOTIONS) {
-      const target = e === best && raw[e] >= this.params.emotionFloor ? raw[e] : 0;
-      const k = approach(dt, this.params.emotionSmoothing);
-      this.emotion[e] += (target - this.emotion[e]) * k;
-      out.set(e, this.emotion[e]);
-    }
-  }
 }
 
 function avg(a: number, b: number): number {
   return (a + b) * 0.5;
 }
 
-function approach(dt: number, tau: number): number {
-  return tau <= 0 ? 1 : Math.min(1, 1 - Math.exp(-dt / tau));
-}

@@ -1,16 +1,18 @@
 /*
  * Checks for the blendshape mapping, run with `npm run check:face`.
  *
- * Two things are worth asserting hardest. Mirroring must swap the eyes, since
- * blinking the wrong one is invisible until someone watches a replay. And the
- * emotion layer must stay quiet unless asked, because it is a guess and a
- * confident wrong expression reads worse than none at all.
+ * The thing worth asserting hardest is mirroring: it must swap the eyes,
+ * since blinking the wrong one is invisible until someone watches a replay.
+ * The emotion presets are asserted too, in the negative -- this solver must
+ * never touch them, because they are under manual control now
+ * (expressionControl.check.ts).
  *
  * Never imported by the app.
  */
 
 import { BLENDSHAPE_COUNT, BLENDSHAPE_INDEX, type BlendshapeName } from "../tracker/faceBlendshapes.ts";
 import { FaceSolver } from "./faceSolver.ts";
+import { EXPRESSIONS } from "../render/expressionControl.ts";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -165,48 +167,21 @@ const DT = 1 / 60;
     `yaw ${s.gaze.yaw.toFixed(1)} pitch ${s.gaze.pitch.toFixed(1)}`);
 }
 
-// --- emotion stays silent unless asked ------------------------------------
+// --- emotion is never inferred -------------------------------------------
 {
   const s = new FaceSolver();
-  const beaming = scores({ mouthSmileLeft: 1, mouthSmileRight: 1, eyeSquintLeft: 1, eyeSquintRight: 1 });
+  out.clear();
+  // Every signal the old inference layer read from, all at once. Nothing it
+  // used to conclude from them may reach the avatar's face.
+  const beaming = scores({
+    mouthSmileLeft: 1, mouthSmileRight: 1, eyeSquintLeft: 1, eyeSquintRight: 1,
+    mouthFrownLeft: 1, mouthFrownRight: 1, browDownLeft: 1, browDownRight: 1,
+    browInnerUp: 1, jawOpen: 1, eyeWideLeft: 1, eyeWideRight: 1,
+  });
   for (let i = 0; i < 120; i++) s.update(beaming, false, DT, out);
-  check("emotion is not inferred by default",
-    ["happy", "angry", "sad", "relaxed", "surprised"].every((e) => (out.get(e) ?? 0) === 0));
-}
-
-// --- but works when enabled, and only one at a time -----------------------
-{
-  const s = new FaceSolver();
-  s.params.inferEmotion = true;
-  const beaming = scores({ mouthSmileLeft: 1, mouthSmileRight: 1, eyeSquintLeft: 1, eyeSquintRight: 1 });
-  for (let i = 0; i < 120; i++) s.update(beaming, false, DT, out);
-
-  check("a clear smile reads as happy", (out.get("happy") ?? 0) > 0.5,
-    `${(out.get("happy") ?? 0).toFixed(2)}`);
-  // A face showing two emotions at once reads as broken.
-  const others = ["angry", "sad", "surprised"].map((e) => out.get(e) ?? 0);
-  check("only one emotion is expressed at a time", others.every((v) => v === 0),
-    others.map((v) => v.toFixed(2)).join(" "));
-}
-
-// --- weak signals must not twitch the face --------------------------------
-{
-  const s = new FaceSolver();
-  s.params.inferEmotion = true;
-  const faint = scores({ mouthSmileLeft: 0.2, mouthSmileRight: 0.2 });
-  for (let i = 0; i < 120; i++) s.update(faint, false, DT, out);
-  check("a faint signal stays below the floor", (out.get("happy") ?? 0) < 0.01,
-    `${(out.get("happy") ?? 0).toFixed(3)}`);
-}
-
-// --- emotions must not snap ------------------------------------------------
-{
-  const s = new FaceSolver();
-  s.params.inferEmotion = true;
-  const beaming = scores({ mouthSmileLeft: 1, mouthSmileRight: 1, eyeSquintLeft: 1, eyeSquintRight: 1 });
-  s.update(beaming, false, DT, out);
-  check("an expression eases in rather than appearing at once",
-    (out.get("happy") ?? 0) < 0.2, `${(out.get("happy") ?? 0).toFixed(3)} after one frame`);
+  check("emotion presets are never written",
+    EXPRESSIONS.every((e) => out.get(e) === undefined),
+    EXPRESSIONS.filter((e) => out.get(e) !== undefined).join(" "));
 }
 
 // --- disabled means nothing is written ------------------------------------

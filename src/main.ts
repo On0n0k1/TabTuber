@@ -26,6 +26,7 @@ import {
 import { AvatarSlot, enableVrmDrop } from "./render/avatarSlot.ts";
 import { Blink, BLINK_EXPRESSION } from "./render/blink.ts";
 import { DebugRig } from "./render/debugRig.ts";
+import { EXPRESSIONS, ExpressionControl, type ExpressionName } from "./render/expressionControl.ts";
 import { PoseBuffer, MAX_LOOKAHEAD } from "./render/poseBuffer.ts";
 import { PoseInterpolator } from "./render/poseInterpolator.ts";
 import { StickFigure } from "./render/stickFigure.ts";
@@ -132,6 +133,8 @@ function boot(): void {
   const mic = new MicLevel();
   const mouth = new Mouth();
   const faceSolver = new FaceSolver();
+  const expressions = new ExpressionControl();
+  expressions.bindKeys();
   const calibrator = new VowelCalibrator();
   let calibration: VowelCalibration | null = readJson("vowels", validateCalibration);
   let vowelRefs = calibration ? referencePoints(calibration) : null;
@@ -302,6 +305,7 @@ function boot(): void {
     faceSolver.gaze.pitch,
   ], 2);
 
+  wireExpressionControls(panel, expressions);
   wireFaceControls(panel, faceSolver, trackerConfig, () => {
     const factory = trackers[backendNames.includes("holistic") ? "holistic" : "pose"];
     void host.use("holistic", factory);
@@ -454,6 +458,10 @@ function boot(): void {
       interpolator.current.expressions,
       vowelRefs ? vowelWeights : null,
     );
+
+    // Last of the expression writers, so a chosen expression wins over
+    // anything the camera or microphone put on the face.
+    expressions.update(dt, interpolator.current.expressions);
 
     if (calibrator.running) banner.show("info", calibrationMessage(calibrator));
 
@@ -859,8 +867,8 @@ function wireLipSync(
 }
 
 /**
- * Blink and gaze are measurements; emotion is a guess (SPEC.md 13), so they
- * are separate switches rather than one.
+ * Blink and gaze only. Emotion was a guess and is now chosen by hand
+ * (SPEC.md 13.2), so it lives in its own folder.
  */
 function wireFaceControls(
   panel: DebugPanel,
@@ -888,9 +896,29 @@ function wireFaceControls(
   folder.add(face.params, "blinkHigh", 0, 1, 0.01).name("eyes shut above");
   folder.add(face.params, "blinkSpeed", 0, 0.3, 0.01).name("lid travel (s)");
   folder.add(face.params, "gazeRange", 0, 40, 1).name("gaze range (deg)");
-  folder.add(face.params, "inferEmotion").name("infer emotion");
-  folder.add(face.params, "emotionFloor", 0, 1, 0.05).name("emotion floor");
-  folder.add(face.params, "emotionSmoothing", 0, 1.5, 0.05).name("emotion smoothing (s)");
+}
+
+/**
+ * Buttons and keys for the emotion presets (SPEC.md 13.2).
+ *
+ * Buttons as well as keys because the keys are undiscoverable, and keys as
+ * well as buttons because the panel is unreachable once a stream is running.
+ */
+function wireExpressionControls(panel: DebugPanel, expressions: ExpressionControl): void {
+  const folder = panel.folder("Expression");
+
+  folder.add(expressions.params, "hotkeys").name("number keys (1-5)");
+  folder.add(expressions.params, "fade", 0, 1, 0.01).name("fade (s)");
+
+  // One button per preset, each a toggle, so pressing the active one returns
+  // to neutral without hunting for a separate control.
+  const actions: Record<string, () => void> = {};
+  EXPRESSIONS.forEach((name: ExpressionName, i: number) => {
+    actions[name] = () => expressions.set(name);
+    folder.add(actions, name).name(`${i + 1}  ${name}`);
+  });
+  actions.neutral = () => expressions.set(null);
+  folder.add(actions, "neutral").name("0  neutral");
 }
 
 function wireMotionControls(

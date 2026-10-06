@@ -49,7 +49,7 @@ export interface DebugPanelOptions {
 }
 
 export class DebugPanel {
-  private readonly gui = new GUI({ title: "virtual-avatar" });
+  private readonly gui = new GUI({ title: "TabTuber" });
   /**
    * Folders by title.
    *

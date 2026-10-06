@@ -7,7 +7,15 @@
  * unreadable value always falls back to the caller's default.
  */
 
-const PREFIX = "virtual-avatar:";
+/*
+ * Renamed with the project, which orphans anything saved under the old
+ * prefix. Deliberate and done before any deployment: the only settings lost
+ * are on the machine that wrote them, where re-selecting a posture and
+ * re-recording three vowels is a minute's work. After release the same change
+ * would silently reset every user instead, so this was the last cheap moment
+ * to make it.
+ */
+const PREFIX = "tabtuber:";
 
 export function readSetting<T extends string>(
   key: string,

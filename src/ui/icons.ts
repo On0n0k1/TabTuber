@@ -1,7 +1,7 @@
 /*
  * Inline SVG icons for the toolbar (SPEC.md 9.1).
  *
- * Hand-drawn rather than pulled from an icon set: eight glyphs is not worth a
+ * Hand-drawn rather than pulled from an icon set: eighteen glyphs is not worth a
  * dependency, and a bundled font or sprite sheet would be a second asset to
  * fetch for a page whose whole point is being a single static file.
  *
@@ -121,6 +121,47 @@ export const ICONS = {
     <path d="M14.8 10.6V5.4" />
     <path d="M17.6 12.4 19.1 8.6" />
     <path d="M5.6 5 18.4 19.2" />`,
+
+  /* --- tracking mode ------------------------------------------------------ */
+
+  /*
+   * Which backend is running: everything, or the body alone (SPEC.md 11).
+   *
+   * Bracketed, like `face`, and for the same reason -- the brackets are what
+   * say "being detected", and this control is about how much of you is. They
+   * also keep these two off the posture glyphs, which are bare figures: two
+   * stick figures on one bar meaning different things is a collision the
+   * brackets are worth four strokes to avoid.
+   *
+   * The pair differ by ARM SPAN first and by the hand dots second. Drawn the
+   * other way round to begin with -- same figure, dots as the only change --
+   * and at 22px a 2px dot beside a 1.6-wide stroke is not a difference, it is
+   * noise: both read as one congested blob. Silhouette is what survives at
+   * that size, so full tracking throws the arms wide to the brackets and
+   * body-only tucks them against the torso. The dots then confirm a reading
+   * the outline has already given.
+   */
+  tracking: `
+    <path d="M3.4 8.4V5.4a2 2 0 0 1 2-2h3" />
+    <path d="M15.6 3.4h3a2 2 0 0 1 2 2v3" />
+    <path d="M20.6 15.6v3a2 2 0 0 1-2 2h-3" />
+    <path d="M8.4 20.6h-3a2 2 0 0 1-2-2v-3" />
+    <circle cx="12" cy="8.1" r="1.8" />
+    <path d="M12 9.9v4.6" />
+    <path d="M12 11.4 7.5 12.3M12 11.4l4.5 0.9" />
+    <circle cx="6.9" cy="12.2" r="0.9" />
+    <circle cx="17.1" cy="12.2" r="0.9" />
+    <path d="M12 14.5 10.1 18.1M12 14.5l1.9 3.6" />`,
+
+  trackingBody: `
+    <path d="M3.4 8.4V5.4a2 2 0 0 1 2-2h3" />
+    <path d="M15.6 3.4h3a2 2 0 0 1 2 2v3" />
+    <path d="M20.6 15.6v3a2 2 0 0 1-2 2h-3" />
+    <path d="M8.4 20.6h-3a2 2 0 0 1-2-2v-3" />
+    <circle cx="12" cy="8.1" r="1.8" />
+    <path d="M12 9.9v4.6" />
+    <path d="M12 11.4 10.2 14.2M12 11.4l1.8 2.8" />
+    <path d="M12 14.5 10.1 18.1M12 14.5l1.9 3.6" />`,
 
   /* --- posture ---------------------------------------------------------- */
 

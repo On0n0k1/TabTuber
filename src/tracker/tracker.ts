@@ -63,9 +63,14 @@ export type PoseFrameHandler = (frame: PoseFrame) => void;
 export interface Tracker {
   /** Shown in the panel so the active backend is never ambiguous. */
   readonly name: string;
-  /** False when hand landmarks are unavailable, so the solver and UI adapt. */
+  /**
+   * What this backend CAN do, not what it is currently doing.
+   *
+   * Capability, because that is the question the UI has: whether a control
+   * may be offered at all. Whether face blendshapes are switched on is a
+   * separate thing the owner of that setting already knows.
+   */
   readonly tracksHands: boolean;
-  /** False when the backend produces no face blendshapes, likewise. */
   readonly tracksFace: boolean;
   readonly ready: boolean;
   readonly delegate: TrackerDelegate;

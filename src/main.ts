@@ -177,6 +177,36 @@ function boot(): void {
   const rebuildTracker = (): void => {
     void host.use(trackerConfig.backend, newTracker);
   };
+
+  /*
+   * What face and finger tracking were before body-only turned them off.
+   *
+   * Remembered rather than discarded: pose supplies neither, so both have to
+   * go off, but coming back should not silently cost settings the user never
+   * chose to turn off.
+   */
+  let suspended: { faceBlendshapes: boolean; fingers: boolean } | null = null;
+
+  const setBackend = (value: TrackerBackend): void => {
+    if (value === trackerConfig.backend) return;
+    trackerConfig.backend = value;
+    writeSetting("backend", value);
+
+    if (value === "pose") {
+      suspended = {
+        faceBlendshapes: trackerConfig.faceBlendshapes,
+        fingers: solver.options.fingers,
+      };
+      // Before the rebuild: faceBlendshapes is read when the graph is built.
+      trackerConfig.faceBlendshapes = false;
+      solver.options.fingers = false;
+    } else if (suspended) {
+      trackerConfig.faceBlendshapes = suspended.faceBlendshapes;
+      solver.options.fingers = suspended.fingers;
+      suspended = null;
+    }
+    rebuildTracker();
+  };
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
 
@@ -559,6 +589,30 @@ function boot(): void {
       set: applyMic,
     },
     {
+      /*
+       * Which backend runs. Not a quality setting -- Holistic tracks better
+       * on every axis including the body -- but a cost one: a phone spends
+       * 288ms per inference where a desktop spends 20ms, and the hands and
+       * face are three of Holistic's five sub-graphs (SPEC.md 9.5, 11).
+       *
+       * A cycle, not a toggle, for the reason CycleItem gives: there is no
+       * "off" to darken into. Tracking everything and tracking a body are
+       * both real states, and dimming one of them would claim otherwise.
+       *
+       * Placed immediately before the two controls it governs, so the bar
+       * reads left to right as the mode and then what the mode allows.
+       */
+      kind: "cycle",
+      label: "Tracking",
+      tip: "Body only drops the hands and face, which is most of the cost on a slow device. Loads a different model, so expect a pause.",
+      states: [
+        { value: "holistic", label: "full", icon: "tracking" },
+        { value: "pose", label: "body only", icon: "trackingBody" },
+      ],
+      get: () => trackerConfig.backend,
+      set: (value: string) => setBackend(value as TrackerBackend),
+    },
+    {
       kind: "toggle",
       label: "Face tracking",
       // Said plainly, because it is not free: the hitch on toggling it would
@@ -571,6 +625,17 @@ function boot(): void {
         trackerConfig.faceBlendshapes = on;
         rebuildTracker();
       },
+      /*
+       * Asked of the running tracker rather than of the stored backend, so
+       * the control stays live for as long as a capable graph is still
+       * serving frames -- `use` keeps the old backend until the new one has
+       * loaded, and greying a button over a tracker that is still working
+       * would be a lie for the length of a model download.
+       */
+      disabled: () =>
+        host.current && !host.current.tracksFace
+          ? "Body-only tracking has no face model to read blink or gaze from."
+          : null,
     },
     {
       kind: "toggle",
@@ -584,6 +649,10 @@ function boot(): void {
       set: (on: boolean) => {
         solver.options.fingers = on;
       },
+      disabled: () =>
+        host.current && !host.current.tracksHands
+          ? "Body-only tracking supplies no hand landmarks to articulate."
+          : null,
     },
     {
       /*

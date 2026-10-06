@@ -77,8 +77,8 @@ import { Toolbar } from "./ui/toolbar.ts";
  * ignored. Anything else arrives by upload or by being dropped on the page.
  */
 const MODELS = [
-  { label: "Avatar X", url: "/models/AvatarSample_X.vrm" },
-  { label: "Avatar B", url: "/models/AvatarSample_B.vrm" },
+  { label: "Avatar X", url: `${import.meta.env.BASE_URL}models/AvatarSample_X.vrm` },
+  { label: "Avatar B", url: `${import.meta.env.BASE_URL}models/AvatarSample_B.vrm` },
 ] as const;
 
 /**

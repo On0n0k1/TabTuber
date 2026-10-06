@@ -31,7 +31,7 @@ import {
 } from "../types.ts";
 import { VideoTracker, visionFileset, type TrackerDelegate } from "./tracker.ts";
 
-const MODEL_PATH = "/models/holistic_landmarker.task";
+const MODEL_PATH = `${import.meta.env.BASE_URL}models/holistic_landmarker.task`;
 
 export interface HolisticTrackerOptions {
   readonly minPoseDetectionConfidence?: number;

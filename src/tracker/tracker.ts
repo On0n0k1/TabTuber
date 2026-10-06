@@ -15,7 +15,13 @@
 import { FilesetResolver } from "@mediapipe/tasks-vision";
 import type { PoseFrame } from "../types.ts";
 
-export const WASM_PATH = "/mediapipe/wasm";
+/*
+ * Staged into `public/mediapipe/wasm` by scripts/fetch-assets.mjs, so the
+ * path is relative to the deployed document rather than the server root --
+ * the site is served from a subpath (SPEC.md section 3), where a leading
+ * slash would resolve outside it.
+ */
+export const WASM_PATH = `${import.meta.env.BASE_URL}mediapipe/wasm`;
 
 export type TrackerDelegate = "GPU" | "CPU";
 export type PoseFrameHandler = (frame: PoseFrame) => void;

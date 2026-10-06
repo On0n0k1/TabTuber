@@ -1,6 +1,14 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  /*
+   * The site is deployed under /projects/tabtuber/ rather than at a domain
+   * root (SPEC.md section 3). A relative base makes every emitted asset URL
+   * document-relative, so the build carries no knowledge of the subpath and
+   * the same output would serve from any prefix. Vite normalises this to "/"
+   * for the dev server, which keeps `npm run dev` at localhost:5173/.
+   */
+  base: "./",
   server: {
     // getUserMedia needs a secure context; localhost qualifies.
     // LAN testing from a phone requires https, see SPEC.md section 3.

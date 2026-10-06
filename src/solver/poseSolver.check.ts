@@ -322,15 +322,27 @@ function addFingers(h: Float32Array, side: "left" | "right", curlDeg = 0): Float
     h[i * 3] = p[0]; h[i * 3 + 1] = p[1]; h[i * 3 + 2] = p[2];
   };
 
-  /** Lays a chain of segments out from `from`, bending by curlDeg each time. */
-  const chain = (from: number, joints: readonly number[], lengths: readonly number[]): void => {
+  /**
+   * Lays a chain of segments out from `from`, bending by curlDeg each time.
+   *
+   * `along` is the direction the chain rests in. It defaults to the hand's
+   * axis, which is right for the four fingers; the thumb rests about 40
+   * degrees off it and must be given its own, or the fixture asserts the very
+   * assumption that was wrong.
+   */
+  const chain = (
+    from: number,
+    joints: readonly number[],
+    lengths: readonly number[],
+    along: readonly [number, number, number] = [s, 0, 0],
+  ): void => {
     let [x, y, z] = get(from);
     const q = quat();
     const dir = v3();
     for (let i = 0; i < joints.length; i++) {
       // Cumulative: a closing finger bends further at every joint along it.
       setAxisAngle(q, [0, 0, 1], sign * (i + 1) * curlDeg * (Math.PI / 180));
-      rotateV3(dir, q, [s, 0, 0]);
+      rotateV3(dir, q, [along[0], along[1], along[2]]);
       x += dir[0] * (lengths[i] as number);
       y += dir[1] * (lengths[i] as number);
       z += dir[2] * (lengths[i] as number);
@@ -343,10 +355,20 @@ function addFingers(h: Float32Array, side: "left" | "right", curlDeg = 0): Float
   chain(HAND.RING_MCP, [HAND.RING_PIP, HAND.RING_DIP, HAND.RING_TIP], [0.040, 0.025, 0.018]);
   chain(HAND.PINKY_MCP, [HAND.PINKY_PIP, HAND.PINKY_DIP, HAND.PINKY_TIP], [0.031, 0.019, 0.017]);
 
-  // The thumb starts from the wrist, not from a knuckle, and keeps its own
-  // segment count: a metacarpal where the others have an intermediate.
+  /*
+   * The thumb starts from the wrist rather than a knuckle, keeps its own
+   * segment count -- a metacarpal where the others have an intermediate --
+   * and rests ABOUT 40 DEGREES off the hand's axis, swung toward +Z.
+   *
+   * Laying it along +X like the fingers is what made an earlier version of
+   * this file agree with a solver that assumed the same thing. Both were
+   * wrong together, so the check passed while the avatar's palm was being
+   * pulled out of shape. These are the measured rest directions from the
+   * reference models; see referenceRig.ts.
+   */
   set(HAND.THUMB_CMC, [(h[0] ?? 0) + 0.021 * s, h[1] ?? 0, 0.021]);
-  chain(HAND.THUMB_CMC, [HAND.THUMB_MCP, HAND.THUMB_IP, HAND.THUMB_TIP], [0.036, 0.031, 0.025]);
+  chain(HAND.THUMB_CMC, [HAND.THUMB_MCP], [0.036], [0.759 * s, -0.044, 0.649]);
+  chain(HAND.THUMB_MCP, [HAND.THUMB_IP, HAND.THUMB_TIP], [0.031, 0.025], [0.787 * s, -0.034, 0.616]);
   return h;
 }
 
@@ -1073,6 +1095,98 @@ const allVisible = new Float32Array(LANDMARK_COUNT).fill(1);
     `${thumb.toFixed(1)} degrees`);
 }
 
+
+/*
+ * --- a rolled hand must not twist its fingers -----------------------------
+ *
+ * Every finger check above uses a palm-down hand, which is the rest
+ * orientation -- the one case where an error in how the finger's rotation
+ * relates to the hand's cancels out. Rolling the whole hand, fingers and all,
+ * changes nothing about the fingers themselves: they are still straight, so
+ * they must still solve to identity.
+ */
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+
+  const flat = makeFullHand("left", 0.65, 1.4, 0);
+  const roll = quat();
+  setAxisAngle(roll, [1, 0, 0], Math.PI / 2);
+  const rolled = project(rotateHand(flat, roll, 0.65, 1.4));
+
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: rolled, right: null });
+
+  const straight: HumanBoneName[] = [
+    "leftIndexProximal", "leftIndexIntermediate",
+    "leftMiddleProximal", "leftLittleProximal",
+  ];
+  const worst = Math.max(...straight.map((b) => angleOf(boneQuat(pose.rotations, b))));
+  check("a rolled hand leaves its straight fingers straight", worst < 0.5,
+    `${worst.toFixed(1)} degrees of rotation on a finger that did not move`);
+}
+
+/*
+ * --- a lost finger holds, it does not relax -------------------------------
+ *
+ * A limb that leaves frame is usually gone, so relaxing it is the better
+ * guess. A finger is almost never gone: it is behind another finger, or lost
+ * to one bad frame, while its hand is still being tracked in plain view.
+ * Relaxing it changes the shape of a visible hand for something the performer
+ * did not do.
+ */
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+
+  const curled = project(makeFullHand("left", 0.65, 1.4, 25));
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: curled, right: null });
+  const held = angleOf(boneQuat(pose.rotations, "leftIndexProximal"));
+  check("a tracked finger is bent before the hand is lost", held > 15, `${held.toFixed(1)} deg`);
+
+  // The hand disappears, for much longer than hold + decay would allow a limb.
+  const invisible = new Float32Array(LANDMARK_COUNT).fill(0);
+  for (let i = 0; i < 200; i++) {
+    solver.solve(rest, invisible, pose, (12 + i) * 33.3, { left: null, right: null });
+  }
+  const after = angleOf(boneQuat(pose.rotations, "leftIndexProximal"));
+  check("a lost finger stays where it was", Math.abs(after - held) < 0.5,
+    `${held.toFixed(1)} deg became ${after.toFixed(1)} deg`);
+
+  // The arm is the opposite case and must still relax, or this has been
+  // turned into "nothing ever decays".
+  const arm = angleOf(boneQuat(pose.rotations, "leftUpperArm"));
+  check("the arm it hangs off still relaxes", arm > 10,
+    `${arm.toFixed(1)} deg, expected to have fallen toward the relaxed pose`);
+}
+
+/*
+ * --- a thumb at rest must not rotate --------------------------------------
+ *
+ * The thumb rests about 40 degrees off the hand's axis. Giving the solver the
+ * hand's direction for it applied that 40 degrees as a permanent rotation to
+ * the thumb METACARPAL, which is a bone inside the palm -- so the error did
+ * not merely misplace the thumb, it dragged palm geometry and read as the
+ * avatar's palm stretching.
+ *
+ * Nothing caught it because the fixture laid its thumb along the hand's axis
+ * too: the check and the solver shared the assumption and agreed with each
+ * other while the avatar was visibly wrong.
+ */
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+  const flat = project(makeFullHand("left", 0.65, 1.4, 0));
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: flat, right: null });
+
+  for (const bone of ["leftThumbMetacarpal", "leftThumbProximal"] as HumanBoneName[]) {
+    const angle = angleOf(boneQuat(pose.rotations, bone));
+    check(`${bone} is at rest for a neutral hand`, angle < 1,
+      `${angle.toFixed(1)} degrees on a thumb that is not moving`);
+  }
+}
 
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);
 console.log("\nALL PASS");

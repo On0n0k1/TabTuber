@@ -20,6 +20,8 @@ import { LM, SOLVER_LANDMARKS, STANDING_LANDMARKS } from "../tracker/landmarks.t
 import {
   BONE_INDEX,
   BONE_COUNT,
+  DRIVEN_BONES,
+  isFingerBone,
   type AvatarPose,
   type HumanBoneName,
 } from "../types.ts";
@@ -38,6 +40,7 @@ import {
   multiply,
   normalize,
   quat,
+  rotateV3,
   scaleRotation,
   setAxisAngle,
   slerp,
@@ -319,7 +322,20 @@ export class PoseSolver {
   readonly weights = new Float32Array(BONE_COUNT);
 
   /** Last rotation trusted enough to fall back on, and its age in seconds. */
-  private readonly lastGood: Q4[] = Array.from({ length: BONE_COUNT }, () => quat());
+  /**
+   * Last trusted rotation per bone, and where a bone sits before it has ever
+   * been seen.
+   *
+   * Fingers start from the relaxed curl rather than from the humanoid rest,
+   * which is straight: a hand that has never been tracked should not hold its
+   * fingers out like a mannequin. Every other bone starts at rest, which is
+   * where the arm chain already puts it.
+   */
+  private readonly lastGood: Q4[] = Array.from({ length: BONE_COUNT }, (_, i) => {
+    const q = identity(quat());
+    const bone = DRIVEN_BONES[i] as HumanBoneName;
+    return isFingerBone(bone) ? copyQ(q, RELAXED_POSE[i] as Q4) : q;
+  });
   private readonly sinceGood = new Float32Array(BONE_COUNT).fill(Number.MAX_SAFE_INTEGER);
   private lastTimestampMs = -1;
 
@@ -363,7 +379,10 @@ export class PoseSolver {
   private readonly fa = v3();
   private readonly fb = v3();
   private readonly fDir = v3();
+  private readonly fLocal = v3();
   private readonly qFinger = quat();
+  private readonly qFingerLocal = quat();
+  private readonly qParentInv = quat();
   private readonly palmX = v3();
   private readonly palmY = v3();
   private readonly palmZ = v3();
@@ -492,10 +511,21 @@ export class PoseSolver {
       const age = (this.sinceGood[idx] ?? 0) + dt;
       this.sinceGood[idx] = age;
 
-      // Hold, then decay. Without the timeout a permanently occluded limb
-      // would freeze forever in whatever position it was last seen.
-      const decay =
-        opts.decaySeconds <= 0
+      /*
+       * Hold, then decay. Without the timeout a permanently occluded limb
+       * would freeze forever in whatever position it was last seen.
+       *
+       * FINGERS DO NOT DECAY. A limb that leaves frame is usually gone --
+       * someone has lowered an arm -- so relaxing it is the better guess. A
+       * finger is almost never gone: it is momentarily behind another finger
+       * or lost to one bad frame, while the hand it belongs to is still being
+       * tracked right there. Relaxing it changes the shape of a visible hand
+       * for something the performer did not do, where holding is wrong only
+       * until the next frame that sees it.
+       */
+      const decay = isFingerBone(bone)
+        ? 0
+        : opts.decaySeconds <= 0
           ? 1
           : Math.min(1, Math.max(0, (age - opts.holdSeconds) / opts.decaySeconds));
 
@@ -683,19 +713,29 @@ export class PoseSolver {
 
     if (haveHand) {
       this.setBone(pose, handBone, this.qPalm, this.worldOf(lowerBone), handConfidence, dt);
+    }
 
-      /*
-       * After the hand, because every finger hangs off its world rotation,
-       * and only when the palm frame is real -- the pose backend's three
-       * knuckle estimates cannot say anything about a finger.
-       *
-       * palmX/Y/Z still describe this side here. unrollPalm rolls `qPalm`
-       * without touching them, and that roll maps palmZ to its own negation,
-       * which a projection does not care about.
-       */
-      if (this.options.fingers && hand && this.usePalmFrame(hand)) {
-        this.solveFingers(hand.world, pose, side, handConfidence, dt);
-      }
+    /*
+     * Fingers last, and OUTSIDE the haveHand branch.
+     *
+     * After the hand because every finger hangs off its world rotation. But
+     * not conditional on it: resetAll puts every bone at identity each frame
+     * and only a bone some stage WRITES reaches the gating path, so skipping
+     * the call when the hand was not seen did not hold the fingers -- it
+     * snapped them straight, which is the one thing they must not do.
+     *
+     * Landmarks are passed only when the palm frame is real; the pose
+     * backend's three knuckle estimates cannot say anything about a finger.
+     * Without them the call still runs, with no confidence, which is what
+     * asks for the held value.
+     *
+     * palmX/Y/Z still describe this side here. unrollPalm rolls `qPalm`
+     * without touching them, and that roll maps palmZ to its own negation,
+     * which a projection does not care about.
+     */
+    if (this.options.fingers) {
+      const landmarks = haveHand && hand && this.usePalmFrame(hand) ? hand.world : null;
+      this.solveFingers(landmarks, pose, side, landmarks ? handConfidence : 0, dt);
     }
   }
 
@@ -716,14 +756,13 @@ export class PoseSolver {
    * the honest statement of why.
    */
   private solveFingers(
-    hand: Float32Array,
+    hand: Float32Array | null,
     pose: AvatarPose,
     side: Side,
     confidence: number,
     dt: number,
   ): void {
     const handBone = `${side}Hand` as HumanBoneName;
-    const rest = restDirOf(handBone);
 
     for (const chain of FINGER_CHAINS) {
       // Reset per finger: each one hangs off the hand, not off the last
@@ -731,6 +770,21 @@ export class PoseSolver {
       let parentWorld = this.worldOf(handBone);
 
       for (let i = 0; i < chain.bones.length; i++) {
+        const boneName = `${side}${chain.bones[i]}` as HumanBoneName;
+
+        /*
+         * No landmarks: hand the bone its own parent as the "solved" value
+         * and no confidence. setBone ignores the rotation entirely at zero
+         * weight and returns the held one, so what is passed does not matter
+         * -- only that the bone is written at all, which is what keeps it off
+         * the identity that resetAll left behind.
+         */
+        if (!hand) {
+          this.setBone(pose, boneName, parentWorld, parentWorld, 0, dt);
+          parentWorld = this.worldOf(boneName);
+          continue;
+        }
+
         readPoint(this.fa, hand, chain.joints[i] as number);
         readPoint(this.fb, hand, chain.joints[i + 1] as number);
         sub(this.fDir, this.fb, this.fa);
@@ -741,10 +795,36 @@ export class PoseSolver {
         if (vectorLength(this.fDir) < 1e-6) break;
         normalize(this.fDir, this.fDir);
 
-        const bone = `${side}${chain.bones[i]}` as HumanBoneName;
-        fromUnitVectors(this.qFinger, rest, this.fDir);
-        this.setBone(pose, bone, this.qFinger, parentWorld, confidence, dt);
-        parentWorld = this.worldOf(bone);
+        /*
+         * Solved in the PARENT'S frame, not against the world axis.
+         *
+         * `fromUnitVectors` returns the shortest arc, which carries no twist
+         * about the axis it rotates onto. The hand, by contrast, is a full
+         * basis and does carry roll. Taking the shortest arc in world space
+         * and then expressing it against the hand therefore left the hand's
+         * roll in the finger, inverted: a hand rolled ninety degrees twisted
+         * every straight finger by ninety degrees, which is what a palm
+         * turned to face the camera does.
+         *
+         * Rotating the measured direction into the parent's frame first
+         * removes the roll from the comparison entirely -- what is left is
+         * the bend of this joint relative to the one before it, which is what
+         * a joint angle means. Composing back with the parent hands setBone
+         * the world rotation it expects.
+         */
+        /*
+         * Each bone's OWN rest direction, not the hand's. The four fingers
+         * do lie along the hand's axis, but the thumb rests about 40 degrees
+         * off it, and borrowing the hand's direction applied that difference
+         * as a permanent rotation -- to a metacarpal that lives inside the
+         * palm, which dragged the palm out of shape with it.
+         */
+        invert(this.qParentInv, parentWorld);
+        rotateV3(this.fLocal, this.qParentInv, this.fDir);
+        fromUnitVectors(this.qFingerLocal, restDirOf(boneName), this.fLocal);
+        multiply(this.qFinger, parentWorld, this.qFingerLocal);
+        this.setBone(pose, boneName, this.qFinger, parentWorld, confidence, dt);
+        parentWorld = this.worldOf(boneName);
       }
     }
   }

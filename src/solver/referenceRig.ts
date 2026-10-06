@@ -62,10 +62,67 @@ export const REST_BONE: ReadonlyMap<HumanBoneName, RestBone> = new Map(
   REFERENCE_RIG.map((b) => [b.name, b]),
 );
 
+/*
+ * Rest directions for the finger bones, which the reference rig does not draw.
+ *
+ * The four fingers lie along the hand's own axis, so for them this is just
+ * +X, and borrowing the hand's direction was correct. THE THUMB DOES NOT.
+ * Measured on the reference models, with node rotations composed, a thumb
+ * rests about 40 degrees off that axis and swung toward +Z:
+ *
+ *   metacarpal -> proximal   0.759, -0.044, 0.649    40.6 deg off +X
+ *   proximal   -> distal     0.787, -0.034, 0.616    38.1 deg off +X
+ *   index proximal (control) 1.000,  0.000, -0.019    1.1 deg
+ *
+ * Treating the thumb as though it rested along +X therefore applied a
+ * constant 40 degrees of rotation to it -- and the metacarpal is a bone
+ * INSIDE the palm, so that error dragged palm geometry with it and read as
+ * the avatar's palm being stretched out of shape.
+ *
+ * Two models agree to within 0.003, and the right hand is the exact mirror,
+ * so this is a VRM authoring convention rather than one file's quirk. It is
+ * still an assumption about the model: a VRM that rests its thumb elsewhere
+ * would be wrong by the difference, and reading the figures off the loaded
+ * avatar is the way to stop assuming.
+ */
+const THUMB_REST = {
+  metacarpal: [0.759, -0.044, 0.649],
+  proximal: [0.787, -0.034, 0.616],
+} as const;
+
+const FINGER_REST_DIR: [HumanBoneName, V3][] = (() => {
+  const out: [HumanBoneName, V3][] = [];
+  for (const side of ["left", "right"] as const) {
+    // Mirroring is a reflection across the YZ plane, which negates x alone.
+    const sx = side === "left" ? 1 : -1;
+    const t = THUMB_REST;
+    out.push(
+      [`${side}ThumbMetacarpal` as HumanBoneName, [sx * t.metacarpal[0], t.metacarpal[1], t.metacarpal[2]]],
+      [`${side}ThumbProximal` as HumanBoneName, [sx * t.proximal[0], t.proximal[1], t.proximal[2]]],
+      // The distal bone points at a fingertip, which is not a humanoid bone
+      // and so cannot be measured; it continues the proximal closely enough.
+      [`${side}ThumbDistal` as HumanBoneName, [sx * t.proximal[0], t.proximal[1], t.proximal[2]]],
+    );
+    for (const finger of ["Index", "Middle", "Ring", "Little"] as const) {
+      for (const segment of ["Proximal", "Intermediate", "Distal"] as const) {
+        out.push([`${side}${finger}${segment}` as HumanBoneName, [sx, 0, 0]]);
+      }
+    }
+  }
+  return out;
+})();
+
 /** Unit rest direction of each bone, head to tail, in world space. */
-export const REST_DIR: ReadonlyMap<HumanBoneName, V3> = new Map(
-  REFERENCE_RIG.map((b) => [b.name, normalize(v3(), sub(v3(), b.tail, b.head))]),
-);
+export const REST_DIR: ReadonlyMap<HumanBoneName, V3> = new Map([
+  ...REFERENCE_RIG.map((b): [HumanBoneName, V3] => [
+    b.name,
+    normalize(v3(), sub(v3(), b.tail, b.head)),
+  ]),
+  ...FINGER_REST_DIR.map(([name, dir]): [HumanBoneName, V3] => [
+    name,
+    normalize(v3(), dir),
+  ]),
+]);
 
 export function restDirOf(name: HumanBoneName): Readonly<V3> {
   return REST_DIR.get(name) ?? [1, 0, 0];

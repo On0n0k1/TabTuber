@@ -49,8 +49,13 @@ export interface MicParams {
  *
  * The defaults are not uniform, because the three do different things:
  *
- * - `noiseSuppression` removes background noise while preserving speech,
- *   which is what the mouth should follow. On.
+ * - `noiseSuppression` removes background noise while preserving speech.
+ *   OFF, having been on. Anyone who cares about their audio already has a
+ *   processing chain in front of the browser, and this then runs a second
+ *   suppressor over an already-cleaned signal -- which attacks the quiet
+ *   parts of words, because that is what is left to attack. The project's
+ *   position on the speech gate was the same: a performer's own microphone
+ *   does this better than we can from inside a tab.
  * - `echoCancellation` removes what the speakers are playing back into the
  *   microphone. Matters for VTubing specifically: without it, game audio
  *   through speakers moves the avatar's mouth. On.
@@ -61,7 +66,8 @@ export interface MicParams {
  * Worth knowing what suppression does and does not catch: it targets
  * STATIONARY noise -- fans, hum, room tone. A snap, clap or knock is a
  * transient and will largely pass through, so the duration gate remains the
- * defence against those.
+ * defence against those. That is also why turning it off costs less than it
+ * sounds: the thing it removed was never what moved the mouth wrongly.
  */
 export interface MicProcessing {
   noiseSuppression: boolean;
@@ -70,7 +76,7 @@ export interface MicProcessing {
 }
 
 export const DEFAULT_MIC_PROCESSING: MicProcessing = {
-  noiseSuppression: true,
+  noiseSuppression: false,
   echoCancellation: true,
   autoGainControl: false,
 };

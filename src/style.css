@@ -252,6 +252,29 @@ body[data-bg="key"] {
   background: rgb(126 200 255 / 0.24);
 }
 
+/*
+ * Unavailable. The tooltip carries the reason; this only has to say "not
+ * now" without being read as merely off -- a real risk, because a disabled
+ * control is usually also off, and off is already a dimmer grey. Opacity
+ * does what a third shade could not: the icon loses contrast against the bar
+ * instead of just changing colour, which reads as a different KIND of state
+ * rather than a further degree of the same one.
+ *
+ * After the hover rules deliberately. Equal specificity, so source order is
+ * what stops a button brightening under a pointer that cannot press it.
+ */
+.tool[aria-disabled="true"],
+.tool[aria-disabled="true"]:hover {
+  opacity: 0.4;
+  color: #5a5a66;
+  border-color: transparent;
+  background: transparent;
+  cursor: not-allowed;
+}
+
+/* Focus is left alone on purpose: the button stays reachable by keyboard so
+   its tooltip can explain why it is unavailable. */
+
 .tool:focus-visible {
   outline: 2px solid #7ec8ff;
   outline-offset: 2px;

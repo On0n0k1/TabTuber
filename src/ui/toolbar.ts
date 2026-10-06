@@ -35,6 +35,16 @@ export interface ToggleItem {
   iconOff?: IconName;
   get: () => boolean;
   set: (on: boolean) => void;
+  /**
+   * Why this control cannot be used right now, or null when it can.
+   *
+   * The REASON rather than a boolean, because a greyed button with no
+   * explanation is a worse control than a live one that does nothing useful:
+   * the state it is in is visible and the cause never is. What comes back
+   * here replaces `tip` in the tooltip, so the button explains itself in the
+   * one place a user is already looking.
+   */
+  disabled?: () => string | null;
 }
 
 /**
@@ -81,6 +91,32 @@ export function nextCycle(values: readonly string[], current: string): string {
   return values[(i + 1) % values.length] ?? current;
 }
 
+/** What `render` last wrote to a button, and what it is about to write. */
+export interface ButtonPaint {
+  icon: IconName;
+  on: boolean;
+  disabled: boolean;
+}
+
+/**
+ * Whether `render` has to touch the DOM for this button.
+ *
+ * Pulled out of `render` so it can be checked: it is a three-field comparison
+ * that silently does nothing when it is wrong. Forgetting a field here does
+ * not throw or render incorrectly on the next frame -- it renders the OLD
+ * state forever, for whichever change was left out, and only for buttons
+ * whose other two fields happen to be unchanged. A greyed-out control that
+ * never greys out is the exact shape of that bug.
+ */
+export function needsRepaint(shown: ButtonPaint | null, next: ButtonPaint): boolean {
+  if (!shown) return true;
+  return (
+    shown.icon !== next.icon ||
+    shown.on !== next.on ||
+    shown.disabled !== next.disabled
+  );
+}
+
 /** The state a click moves a group item to. */
 export function nextGroup(
   current: string | null,
@@ -96,11 +132,13 @@ interface Button {
   el: HTMLButtonElement;
   icon: SVGSVGElement;
   /** What `render` last wrote, so an unchanged frame touches nothing. */
-  shown: { icon: IconName; on: boolean } | null;
+  shown: ButtonPaint | null;
   /** Current icon and lit state, read fresh each frame. */
   read: () => { icon: IconName; on: boolean | null };
   tooltip: () => { label: string; tip: string; key?: string };
   click: () => void;
+  /** Reason the control is unavailable, or null. Read fresh each frame. */
+  disabled: () => string | null;
 }
 
 export class Toolbar {
@@ -161,6 +199,7 @@ export class Toolbar {
         },
         tooltip: () => item,
         click: () => item.set(!item.get()),
+        disabled: () => item.disabled?.() ?? null,
       });
       return;
     }
@@ -181,6 +220,7 @@ export class Toolbar {
           return { label: state ? `${item.label}: ${state.label}` : item.label, tip: item.tip, ...(item.key !== undefined && { key: item.key }) };
         },
         click: () => item.set(nextCycle(item.states.map((s) => s.value), item.get())),
+        disabled: () => null,
       });
       return;
     }
@@ -190,6 +230,7 @@ export class Toolbar {
         read: () => ({ icon: option.icon, on: item.get() === option.value }),
         tooltip: () => option,
         click: () => item.set(nextGroup(item.get(), option.value, item.allowNone)),
+        disabled: () => null,
       });
     }
   }
@@ -206,6 +247,11 @@ export class Toolbar {
     const button: Button = { el, icon, shown: null, ...spec };
 
     el.addEventListener("click", () => {
+      // Guarded here rather than with the `disabled` attribute, which would
+      // drop the button out of the tab order and take the explanation with
+      // it -- the tooltip that says WHY is raised on focus (see below), so a
+      // keyboard user reaching it is the whole point.
+      if (spec.disabled() !== null) return;
       spec.click();
       // Repainted now rather than waiting for the next frame, so the button
       // responds to the press even if the render loop is not running.
@@ -236,8 +282,11 @@ export class Toolbar {
 
   private showTip(button: Button): void {
     const { label, tip, key } = button.tooltip();
+    const reason = button.disabled();
     this.tipLabel.textContent = label;
-    this.tipText.textContent = tip;
+    // The reason displaces the description: what the control would do is of
+    // no use while it cannot do it.
+    this.tipText.textContent = reason ?? tip;
     // Labelled here rather than by each caller, so "1" cannot reach the
     // tooltip on its own with nothing to say what it is.
     this.tipKey.textContent = key === undefined ? "" : `key ${key}`;
@@ -274,7 +323,10 @@ export class Toolbar {
     for (const button of this.buttons) {
       const { icon, on } = button.read();
       const lit = on ?? false;
-      if (button.shown && button.shown.icon === icon && button.shown.on === lit) continue;
+      const reason = button.disabled();
+      const paint: ButtonPaint = { icon, on: lit, disabled: reason !== null };
+      if (!needsRepaint(button.shown, paint)) continue;
+      const off = paint.disabled;
 
       if (!button.shown || button.shown.icon !== icon) {
         const next = iconElement(icon);
@@ -291,9 +343,16 @@ export class Toolbar {
         button.el.setAttribute("aria-pressed", on ? "true" : "false");
       }
 
+      /*
+       * aria-disabled, not the disabled property: the button stays focusable
+       * so its tooltip can say why. The click handler enforces it.
+       */
+      if (off) button.el.setAttribute("aria-disabled", "true");
+      else button.el.removeAttribute("aria-disabled");
+
       const { label, tip } = button.tooltip();
-      button.el.setAttribute("aria-label", `${label}. ${tip}`);
-      button.shown = { icon, on: lit };
+      button.el.setAttribute("aria-label", `${label}. ${reason ?? tip}`);
+      button.shown = paint;
     }
   }
 

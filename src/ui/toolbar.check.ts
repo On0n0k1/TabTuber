@@ -7,10 +7,14 @@
  * cannot be clicked into an invalid state, and a cycle always lands on a real
  * state even when handed a stale one from storage.
  *
+ * Plus `needsRepaint`, which is here for a different reason: it is the one
+ * piece of this file whose failure mode is silence. The others throw or show
+ * the wrong thing; a missed field there just paints nothing, forever.
+ *
  * Never imported by the app.
  */
 
-import { nextCycle, nextGroup } from "./toolbar.ts";
+import { needsRepaint, nextCycle, nextGroup, type ButtonPaint } from "./toolbar.ts";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -69,6 +73,24 @@ const POSTURES = ["sitting", "standing"];
     `${nextGroup("sitting", "sitting", false)}`);
   check("switching still works when none is not allowed",
     nextGroup("sitting", "standing", false) === "standing");
+}
+
+// --- repaint decides on every field it was given --------------------------
+{
+  const base: ButtonPaint = { icon: "face", on: true, disabled: false };
+  check("a button never painted repaints", needsRepaint(null, base));
+  check("an unchanged button does not repaint", !needsRepaint(base, { ...base }));
+  check("a changed icon repaints",
+    needsRepaint(base, { ...base, icon: "faceOff" }));
+  check("a changed lit state repaints", needsRepaint(base, { ...base, on: false }));
+  /*
+   * The one that matters. Icon and lit state are unchanged, which is exactly
+   * the case when a control is greyed out without being toggled -- and the
+   * case a two-field comparison would skip for the life of the page.
+   */
+  check("becoming disabled repaints", needsRepaint(base, { ...base, disabled: true }));
+  check("becoming enabled repaints",
+    needsRepaint({ ...base, disabled: true }, base));
 }
 
 if (failures > 0) throw new Error(`${failures} toolbar check failure(s)`);

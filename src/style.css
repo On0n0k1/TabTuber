@@ -463,8 +463,7 @@ body[data-banner] .latency {
   color: #a8a8b4;
 }
 
-.sheet-row select,
-.sheet-file {
+.sheet-row select {
   flex: 1;
   min-width: 0;
   padding: 4px 6px;
@@ -474,6 +473,49 @@ body[data-banner] .latency {
   color: #e8e8e8;
   font: inherit;
   font-size: 11px;
+}
+
+/*
+ * The real input, kept in the layout but invisible.
+ *
+ * display:none would take it out of the tab order and leave the label
+ * pointing at something unreachable by keyboard. Clipping it to nothing keeps
+ * it focusable, so the label can be reached and activated without a mouse.
+ */
+.sheet-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sheet-upload {
+  display: block;
+  margin-bottom: 9px;
+  padding: 6px 10px;
+  border: 1px dashed #4a4a56;
+  border-radius: 5px;
+  background: #14141a;
+  color: #c8c8d2;
+  font-size: 11px;
+  text-align: center;
+  /* Dashed and centred to read as a drop target as well as a button, since
+     dropping a file anywhere on the page does the same thing. */
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-upload:hover {
+  border-color: #7ec8ff;
+  color: #ffffff;
+}
+
+.sheet-file:focus-visible + .sheet-upload {
+  outline: 2px solid #7ec8ff;
+  outline-offset: 2px;
 }
 
 .sheet-row input[type="checkbox"] {

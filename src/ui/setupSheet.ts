@@ -80,14 +80,36 @@ export class SetupSheet {
     file.type = "file";
     file.accept = ".vrm,model/gltf-binary";
     file.className = "sheet-file";
+
+    /*
+     * The input is hidden behind a label rather than shown.
+     *
+     * A file input renders as the browser's own button with its own words --
+     * "Choose File", "No file chosen" -- which say nothing about what this
+     * one takes, and look like a form on a page rather than part of the app.
+     * The text cannot be changed; only replaced. A label pointed at the input
+     * is still a real control: clicking it opens the picker, and it stays
+     * reachable by keyboard because the input keeps its focus.
+     */
+    file.id = "sheet-upload-input";
+    const upload = document.createElement("label");
+    upload.className = "sheet-upload";
+    upload.htmlFor = file.id;
+    upload.textContent = "Upload a VRM avatar";
+
     file.addEventListener("change", () => {
       const chosen = file.files?.[0];
       if (!chosen) return;
+      // Named back, so it is clear which file was taken -- the avatar
+      // changing is the real feedback, but not if the model resembles the
+      // one before it.
+      upload.textContent = chosen.name;
       void chosen.arrayBuffer().then((buf) => opts.onUpload(buf, chosen.name));
       // Cleared so choosing the same file twice fires again.
       file.value = "";
     });
-    this.addRow("", file);
+
+    this.el.append(file, upload);
 
     const background = this.addSelect("Background", BACKGROUNDS.map((b) => [b, b]));
     background.addEventListener("change", () => opts.onBackground(background.value));

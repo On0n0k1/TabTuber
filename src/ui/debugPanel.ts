@@ -26,6 +26,8 @@ interface Readouts {
   /** Capture to render, the figure SPEC.md 9 budgets. Also on the canvas. */
   latency: string;
   lookahead: string;
+  /** Which backend is running. Ambiguous again now that there are two. */
+  backend: string;
   delegate: string;
   mic: string;
   confidence: string;
@@ -42,6 +44,7 @@ export interface DebugPanelOptions {
     inferenceMs: number;
     latencyMs: number;
     lookaheadMs: number;
+    backend: string;
     delegate: string;
     mic: string;
     confidence: number;
@@ -71,6 +74,7 @@ export class DebugPanel {
     inference: "-",
     latency: "-",
     lookahead: "-",
+    backend: "-",
     delegate: "-",
     mic: "off",
     confidence: "-",
@@ -154,6 +158,7 @@ export class DebugPanel {
     this.readouts.inference = s.inferenceMs > 0 ? `${s.inferenceMs.toFixed(1)} ms` : "-";
     this.readouts.latency = s.latencyMs > 0 ? `${s.latencyMs.toFixed(0)} ms` : "-";
     this.readouts.lookahead = s.lookaheadMs > 0 ? `${s.lookaheadMs.toFixed(0)} ms` : "off";
+    this.readouts.backend = s.backend;
     this.readouts.delegate = s.delegate;
     // Stated rather than inferred: a browser that already holds microphone
     // permission grants it without prompting, so the absence of a prompt says

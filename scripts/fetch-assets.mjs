@@ -22,13 +22,22 @@ const WASM_SRC = join(root, "node_modules/@mediapipe/tasks-vision/wasm");
 const WASM_DEST = join(root, "public/mediapipe/wasm");
 
 /**
- * Only the Holistic model. The pose backend was removed (SPEC.md 11), and
- * with it a ~9MB download that every deployment carried and nothing used.
+ * Both backends' models. Holistic is the default; pose is the fallback for
+ * devices that cannot afford it (SPEC.md 9.5, 11).
+ *
+ * Deployments carry ~9MB they will often not serve. Clients do not: a browser
+ * fetches whichever model its backend asks for, and pose's 9.4MB is smaller
+ * than Holistic's 14MB -- so the slow device this exists for downloads less,
+ * not more, as long as it does not load both in one session.
  */
 const DOWNLOADS = [
   {
     file: "holistic_landmarker.task",
     url: "https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task",
+  },
+  {
+    file: "pose_landmarker_full.task",
+    url: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
   },
 ];
 

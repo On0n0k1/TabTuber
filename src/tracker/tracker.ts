@@ -3,10 +3,15 @@
  *
  * Two backends exist deliberately (SPEC.md 11). Holistic is the default: it
  * tracks better overall and is the only one supplying real hand landmarks.
- * PoseLandmarker remains selectable as a fallback and as an independent
- * reference -- when a pose looks wrong, switching backends separates "the
- * tracker is struggling" from "this backend is struggling", which a single
- * implementation cannot tell you.
+ * PoseLandmarker is body-only and exists for one reason -- Holistic is
+ * unaffordable on a slow device. It was removed once, as a diagnostic
+ * reference that never settled a question, and is back on different grounds:
+ * a phone spends 288ms per inference against a desktop's 20ms, and three of
+ * Holistic's five sub-graphs are the hands and the face (SPEC.md 9.5).
+ *
+ * Backends therefore declare what they CANNOT do, and the UI greys out the
+ * controls that depend on it rather than leaving them live over a tracker
+ * that will never feed them.
  *
  * Subclasses are the only place MediaPipe types may appear; everything
  * downstream sees PoseFrame.
@@ -24,6 +29,14 @@ import type { PoseFrame } from "../types.ts";
 export const WASM_PATH = `${import.meta.env.BASE_URL}mediapipe/wasm`;
 
 export type TrackerDelegate = "GPU" | "CPU";
+
+/**
+ * Selectable backends, as strings so a stored value can be validated against
+ * the set (see readSetting). Order is the order the UI cycles through.
+ */
+export const TRACKER_BACKENDS = ["holistic", "pose"] as const;
+
+export type TrackerBackend = (typeof TRACKER_BACKENDS)[number];
 
 /**
  * Which delegate to build the graph on.
@@ -50,6 +63,10 @@ export type PoseFrameHandler = (frame: PoseFrame) => void;
 export interface Tracker {
   /** Shown in the panel so the active backend is never ambiguous. */
   readonly name: string;
+  /** False when hand landmarks are unavailable, so the solver and UI adapt. */
+  readonly tracksHands: boolean;
+  /** False when the backend produces no face blendshapes, likewise. */
+  readonly tracksFace: boolean;
   readonly ready: boolean;
   readonly delegate: TrackerDelegate;
   /** Inference time only -- not end-to-end pipeline latency. */
@@ -107,6 +124,8 @@ export function visionFileset(): Promise<VisionFileset> {
 
 export abstract class VideoTracker<L extends Closeable> implements Tracker {
   abstract readonly name: string;
+  abstract readonly tracksHands: boolean;
+  abstract readonly tracksFace: boolean;
 
   protected constructor(
     private readonly preference: DelegatePreference = "auto",

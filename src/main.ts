@@ -48,11 +48,14 @@ import { BONE_INDEX, type HumanBoneName,
   type FaceFrame,
 } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
+import { PoseTracker } from "./tracker/poseTracker.ts";
 import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
 import {
   DELEGATE_PREFERENCES,
+  TRACKER_BACKENDS,
   type DelegatePreference,
   type Tracker,
+  type TrackerBackend,
 } from "./tracker/tracker.ts";
 import { TrackerHost } from "./tracker/trackerHost.ts";
 import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.ts";
@@ -135,10 +138,16 @@ function boot(): void {
 
   const stage = new Stage(canvas);
   const camera = new Camera();
-  // Holistic is the only backend (SPEC.md 11). Face blendshapes force the CPU
-  // delegate, so that choice is made when the tracker is built and changing it
-  // rebuilds (see HolisticTrackerOptions).
+  /*
+   * Face blendshapes force the CPU delegate, so that choice is made when the
+   * tracker is built and changing it rebuilds (see HolisticTrackerOptions).
+   *
+   * `backend` is remembered for the same reason `delegate` is, and one more:
+   * a device slow enough to want pose would otherwise download Holistic's
+   * 14MB on every visit before switching away from it (SPEC.md 9.5).
+   */
   const trackerConfig = {
+    backend: readSetting<TrackerBackend>("backend", TRACKER_BACKENDS, "holistic"),
     faceBlendshapes: false,
     /*
      * Remembered, because the whole point is to compare devices: the phone
@@ -152,19 +161,21 @@ function boot(): void {
     ),
   };
   const newTracker = (): Tracker =>
-    new HolisticTracker({
-      faceBlendshapes: trackerConfig.faceBlendshapes,
-      delegate: trackerConfig.delegate,
-    });
+    trackerConfig.backend === "pose"
+      ? new PoseTracker({ delegate: trackerConfig.delegate })
+      : new HolisticTracker({
+          faceBlendshapes: trackerConfig.faceBlendshapes,
+          delegate: trackerConfig.delegate,
+        });
 
   const host = new TrackerHost();
   /*
-   * Rebuilding is how a face-blendshape change takes effect: the delegate is
-   * chosen when the graph is built, so the flag cannot be flipped on a tracker
+   * Rebuilding is how a backend or face-blendshape change takes effect: both
+   * are fixed when the graph is built, so neither can be flipped on a tracker
    * that is already running (see HolisticTrackerOptions).
    */
   const rebuildTracker = (): void => {
-    void host.use("holistic", newTracker);
+    void host.use(trackerConfig.backend, newTracker);
   };
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
@@ -324,6 +335,7 @@ function boot(): void {
       inferenceMs: host.current?.inferenceMs ?? 0,
       latencyMs: latency().ms,
       lookaheadMs: poseBuffer.latencyMs,
+      backend: host.current?.name ?? "-",
       delegate: host.current?.ready ? host.current.delegate : "-",
       confidence: interpolator.current.confidence,
       mic: micState,

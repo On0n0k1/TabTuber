@@ -1,3 +1,15 @@
+# [1.1.0](https://github.com/On0n0k1/TabTuber/compare/v1.0.0...v1.1.0) (2026-10-06)
+
+
+### Features
+
+* **tracker:** allow the delegate to be forced ([e183a93](https://github.com/On0n0k1/TabTuber/commit/e183a93077b5bb99446c1de6b0a779d8f2a83884))
+
+
+### Performance Improvements
+
+* **tracker:** decouple inference rate from camera rate ([e82c454](https://github.com/On0n0k1/TabTuber/commit/e82c4544a48c7eb06bd82490afcc3298607b2910))
+
 # 1.0.0 (2026-10-06)
 
 

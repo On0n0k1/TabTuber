@@ -82,7 +82,6 @@ export class DebugPanel {
   private readonly view = {
     background: "checker" as BackgroundMode,
     helpers: true,
-    preview: true,
   };
 
   /** Sampled groups added by other modules, refreshed each frame. */
@@ -131,9 +130,9 @@ export class DebugPanel {
     view.add(this.view, "helpers").onChange((v: boolean) => {
       this.stage.helpersVisible = v;
     });
-    view.add(this.view, "preview").onChange((v: boolean) => {
-      this.camera.element.style.display = v ? "" : "none";
-    });
+    // Showing the preview is on the toolbar: it is something you turn off to
+    // see the avatar, not a diagnostic (SPEC.md 9.1). It also must not use
+    // display:none, which this did -- see the stylesheet.
 
     this.camera.onStateChange((s) => {
       if (s.kind === "ready") {

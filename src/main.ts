@@ -168,6 +168,24 @@ function boot(): void {
   };
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
+
+  /*
+   * The camera preview and the landmarks drawn over it, shown or hidden
+   * together: they are one thing on screen, and landmarks floating over
+   * nothing is not a view anyone wants.
+   *
+   * Hidden by attribute rather than by display, because the tracking loop
+   * runs on requestVideoFrameCallback on this element and a browser need not
+   * present frames for an element it is not laying out. See the stylesheet.
+   */
+  let previewVisible = true;
+  const applyPreview = (visible: boolean): void => {
+    previewVisible = visible;
+    for (const el of [camera.element, overlay.element]) {
+      if (visible) delete el.dataset["hidden"];
+      else el.dataset["hidden"] = "";
+    }
+  };
   const latencyHud = new LatencyHud(ui);
 
   /*
@@ -501,6 +519,16 @@ function boot(): void {
         // over the button, so the tooltip would land on top of it.
         toolbar.dismissTip();
       },
+    },
+    "divider",
+    {
+      kind: "toggle",
+      label: "Camera preview",
+      tip: "Shows the camera and the landmarks over it. Tracking is unaffected either way.",
+      icon: "eye",
+      iconOff: "eyeOff",
+      get: () => previewVisible,
+      set: applyPreview,
     },
     "divider",
     {

@@ -72,6 +72,23 @@ export const ICONS = {
     <circle cx="15" cy="12" r="1.9" />
     <circle cx="8" cy="17" r="1.9" />`,
 
+  /*
+   * An eye, not a camera.
+   *
+   * This hides the preview, not the camera. A crossed-out camcorder was drawn
+   * and reads as "the camera is off", which is the opposite of what happens:
+   * tracking carries on exactly as before. An eye says what is actually being
+   * turned off, which is someone looking at it.
+   */
+  eye: `
+    <path d="M2.4 12s3.5-6.4 9.6-6.4S21.6 12 21.6 12s-3.5 6.4-9.6 6.4S2.4 12 2.4 12z" />
+    <circle cx="12" cy="12" r="2.8" />`,
+
+  eyeOff: `
+    <path d="M2.4 12s3.5-6.4 9.6-6.4S21.6 12 21.6 12s-3.5 6.4-9.6 6.4S2.4 12 2.4 12z" />
+    <circle cx="12" cy="12" r="2.8" />
+    <path d="M4.2 3.6 19.8 20.4" />`,
+
   /* --- finger tracking --------------------------------------------------- */
 
   /*

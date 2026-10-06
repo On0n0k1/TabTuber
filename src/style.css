@@ -489,3 +489,24 @@ body[data-banner] .latency {
   font-size: 10px;
   line-height: 1.45;
 }
+
+/*
+ * Preview hidden, WITHOUT display:none (SPEC.md 11.1).
+ *
+ * The tracking loop is driven by requestVideoFrameCallback on this very
+ * element, and a callback fires when a frame is presented. `display: none`
+ * takes the element out of the layer tree entirely, which is the condition
+ * under which a browser may stop presenting frames for it -- and stopping
+ * them would stop tracking, from a control that is supposed to affect only
+ * what is on screen.
+ *
+ * Opacity keeps the element laid out and composited, so frames keep being
+ * presented and the callback keeps firing. It costs a composited layer that
+ * nobody can see, which is the right price for not gambling the whole
+ * pipeline on a detail of how one browser treats a hidden video.
+ */
+#ui video[data-hidden],
+.overlay2d[data-hidden] {
+  opacity: 0;
+  pointer-events: none;
+}

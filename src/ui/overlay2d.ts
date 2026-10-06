@@ -37,6 +37,11 @@ export class Overlay2D {
     parent.append(this.canvas);
   }
 
+  /** The canvas itself, for anything that positions or hides it. */
+  get element(): HTMLCanvasElement {
+    return this.canvas;
+  }
+
   setVisible(v: boolean): void {
     this.visible = v;
     this.canvas.style.display = v ? "" : "none";

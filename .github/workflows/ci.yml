@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # Typecheck, the .check.ts suite, and the build. The project has never run
+  # anywhere but the machine it was written on (SPEC §18.2), which is how the
+  # startup model bug survived -- the app loaded a gitignored avatar.vrm that
+  # only existed locally. A build in a clean environment catches that class of
+  # bug, so it runs on every push rather than only on PRs.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # The checks are plain Node programs run under --experimental-strip-types,
+      # not a test runner. None of them import the modules that touch
+      # import.meta.env, which only a bundler defines.
+      - run: npm run check
+      # `prebuild` stages the MediaPipe wasm bundle and downloads the ~14MB
+      # holistic model, so this also proves fetch-assets works from nothing.
+      - run: npm run build
+
+  # Builds the app and syncs dist/ into On0n0k1/On0n0k1.github.io's
+  # sites/projects/tabtuber/, served at on0n0k1.github.io/projects/tabtuber/.
+  # Gated on `test` and on a real push to main, so a commit that fails
+  # typecheck or the checks never reaches the live site.
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_NAME: tabtuber
+      BUILD_OUTPUT_DIR: dist
+    steps:
+      # A shallow clone is enough: nothing in this build reads git history.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Clone On0n0k1.github.io
+        run: |
+          git clone --depth 1 https://x-access-token:${{ secrets.PAGES_DEPLOY_TOKEN }}@github.com/On0n0k1/On0n0k1.github.io.git "$RUNNER_TEMP/pages-repo"
+
+      # rm -rf before copying so files dropped from the build (a renamed
+      # hashed bundle, a retired model) disappear from the site instead of
+      # lingering forever as orphans that only ever accumulate.
+      - name: Sync built site into sites/projects/$PROJECT_NAME
+        run: |
+          PAGES_REPO="$RUNNER_TEMP/pages-repo"
+          rm -rf "$PAGES_REPO/sites/projects/$PROJECT_NAME"
+          mkdir -p "$PAGES_REPO/sites/projects/$PROJECT_NAME"
+          cp -r "$BUILD_OUTPUT_DIR"/. "$PAGES_REPO/sites/projects/$PROJECT_NAME/"
+
+      - name: Commit and push
+        run: |
+          cd "$RUNNER_TEMP/pages-repo"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to deploy."
+            exit 0
+          fi
+          git commit -m "deploy: sync $PROJECT_NAME from ${{ github.repository }}@${{ github.sha }}"
+          # The pages repo takes deploys from several projects, so a push can
+          # lose a race with a sibling. Rebase and retry rather than fail a
+          # deploy that is not actually in conflict.
+          for i in 1 2 3 4 5; do
+            git push && exit 0
+            echo "Push rejected, retrying with rebase ($i)..."
+            git pull --rebase
+          done
+          echo "Push failed after retries" >&2
+          exit 1

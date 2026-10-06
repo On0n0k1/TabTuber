@@ -22,36 +22,13 @@ const WASM_SRC = join(root, "node_modules/@mediapipe/tasks-vision/wasm");
 const WASM_DEST = join(root, "public/mediapipe/wasm");
 
 /**
- * "full" is the default per SPEC.md section 9. lite trades noticeable
- * accuracy for speed we do not need; heavy is ~29MB for a marginal gain.
- */
-const MODELS = {
-  lite: "pose_landmarker_lite",
-  full: "pose_landmarker_full",
-  heavy: "pose_landmarker_heavy",
-};
-
-const variant = process.env["POSE_MODEL"] ?? "full";
-const name = MODELS[variant];
-if (!name) {
-  console.error(`unknown POSE_MODEL "${variant}" (expected: ${Object.keys(MODELS).join(", ")})`);
-  process.exit(1);
-}
-
-/**
- * Holistic first: it is the default backend (SPEC.md 11), so a cold checkout
- * has what it needs soonest if the second download fails or is interrupted.
- * The pose model is still staged, since that backend stays selectable as a
- * fallback and reference.
+ * Only the Holistic model. The pose backend was removed (SPEC.md 11), and
+ * with it a ~9MB download that every deployment carried and nothing used.
  */
 const DOWNLOADS = [
   {
     file: "holistic_landmarker.task",
     url: "https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/latest/holistic_landmarker.task",
-  },
-  {
-    file: `${name}.task`,
-    url: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/${name}/float16/latest/${name}.task`,
   },
 ];
 

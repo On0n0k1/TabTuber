@@ -23,8 +23,6 @@ export type PoseFrameHandler = (frame: PoseFrame) => void;
 export interface Tracker {
   /** Shown in the panel so the active backend is never ambiguous. */
   readonly name: string;
-  /** False when hand landmarks are unavailable, so the solver can adapt. */
-  readonly tracksHands: boolean;
   readonly ready: boolean;
   readonly delegate: TrackerDelegate;
   /** Inference time only -- not end-to-end pipeline latency. */
@@ -66,7 +64,6 @@ export function visionFileset(): Promise<VisionFileset> {
 
 export abstract class VideoTracker<L extends Closeable> implements Tracker {
   abstract readonly name: string;
-  abstract readonly tracksHands: boolean;
 
   protected landmarker: L | null = null;
   private video: HTMLVideoElement | null = null;

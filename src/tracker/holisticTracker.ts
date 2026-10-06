@@ -63,7 +63,6 @@ interface HandBuffer {
 
 export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
   override readonly name = "holistic";
-  override readonly tracksHands = true;
 
   get tracksFace(): boolean {
     return this.options.faceBlendshapes ?? false;

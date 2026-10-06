@@ -49,7 +49,6 @@ import { BONE_INDEX, type HumanBoneName,
 } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
 import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
-import { PoseTracker } from "./tracker/poseTracker.ts";
 import type { Tracker } from "./tracker/tracker.ts";
 import { TrackerHost } from "./tracker/trackerHost.ts";
 import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.ts";
@@ -69,12 +68,6 @@ import { StatusBanner } from "./ui/statusBanner.ts";
 import type { IconName } from "./ui/icons.ts";
 import { SetupSheet } from "./ui/setupSheet.ts";
 import { Toolbar } from "./ui/toolbar.ts";
-
-type BackendName = "holistic" | "pose";
-type TrackerRegistry = Record<BackendName, () => Tracker>;
-
-/** Holistic tracks better overall and is the only source of hand data. */
-const DEFAULT_BACKEND: BackendName = "holistic";
 
 /**
  * Avatars offered in the setup sheet.
@@ -138,23 +131,12 @@ function boot(): void {
 
   const stage = new Stage(canvas);
   const camera = new Camera();
-  // Holistic first: it tracks better overall, and it is the only backend that
-  // supplies real hand landmarks (SPEC.md 11). Pose is kept selectable as a
-  // fallback and as an independent reference when the two disagree.
-  // Face blendshapes force the CPU delegate, so the choice is made when the
-  // tracker is built and changing it rebuilds (see HolisticTrackerOptions).
+  // Holistic is the only backend (SPEC.md 11). Face blendshapes force the CPU
+  // delegate, so that choice is made when the tracker is built and changing it
+  // rebuilds (see HolisticTrackerOptions).
   const trackerConfig = { faceBlendshapes: false };
-  const trackers = {
-    holistic: () => new HolisticTracker({ faceBlendshapes: trackerConfig.faceBlendshapes }),
-    pose: () => new PoseTracker(),
-  } satisfies Record<string, () => Tracker>;
-
-  const backendNames = Object.keys(trackers) as BackendName[];
-  const initialBackend = readSetting<BackendName>(
-    "backend",
-    backendNames,
-    DEFAULT_BACKEND,
-  );
+  const newTracker = (): Tracker =>
+    new HolisticTracker({ faceBlendshapes: trackerConfig.faceBlendshapes });
 
   const host = new TrackerHost();
   /*
@@ -163,8 +145,7 @@ function boot(): void {
    * that is already running (see HolisticTrackerOptions).
    */
   const rebuildTracker = (): void => {
-    const factory = trackers[backendNames.includes("holistic") ? "holistic" : "pose"];
-    void host.use("holistic", factory);
+    void host.use("holistic", newTracker);
   };
   const banner = new StatusBanner(ui);
   const overlay = new Overlay2D(ui);
@@ -271,7 +252,7 @@ function boot(): void {
   // landmarks are hip-centred and cannot report that the body moved.
   const imagePoints = new Float32Array(LANDMARK_COUNT * 3);
 
-  // Hand landmarks, when the active backend supplies them. Filtered with
+  // Hand landmarks, on the frames Holistic finds a hand. Filtered with
   // their own profile: they are the noisiest input and feed the most
   // depth-sensitive derivation in the solver.
   const handFilters = {
@@ -325,7 +306,6 @@ function boot(): void {
       latencyMs: latency().ms,
       lookaheadMs: poseBuffer.latencyMs,
       delegate: host.current?.ready ? host.current.delegate : "-",
-      backend: host.current?.name ?? "-",
       confidence: interpolator.current.confidence,
       mic: micState,
     }),
@@ -752,46 +732,18 @@ function boot(): void {
   });
   stage.start();
 
-  wireBackendControl(panel, host, trackers, initialBackend);
-  void startPipeline(camera, host, banner, trackers, initialBackend);
+  void startPipeline(camera, host, banner, newTracker);
 }
 
 /**
- * Lets the tracking backend be swapped while running.
- *
- * Holistic is the default. Pose stays selectable as a fallback and as a
- * second opinion when a pose looks wrong. The choice persists, since it is a
- * preference rather than a per-session experiment (SPEC.md 11).
- */
-function wireBackendControl(
-  panel: DebugPanel,
-  host: TrackerHost,
-  trackers: TrackerRegistry,
-  initial: BackendName,
-): void {
-  const folder = panel.folder("Backend");
-  const proxy = { backend: initial };
-  folder
-    .add(proxy, "backend", Object.keys(trackers))
-    .onChange((name: string) => {
-      const factory = trackers[name as BackendName];
-      if (!factory) return;
-      writeSetting("backend", name);
-      void host.use(name, factory);
-    });
-}
-
-/**
- * Models are 9 to 14MB, so the first load of each is a real wait. The banner
- * reports it rather than leaving the page looking broken while nothing
- * happens.
+ * The model is 14MB, so the first load is a real wait. The banner reports it
+ * rather than leaving the page looking broken while nothing happens.
  */
 async function startPipeline(
   camera: Camera,
   host: TrackerHost,
   banner: StatusBanner,
-  trackers: TrackerRegistry,
-  backend: BackendName,
+  newTracker: () => Tracker,
 ): Promise<void> {
   host.onStatus((s) => {
     switch (s.kind) {
@@ -809,7 +761,7 @@ async function startPipeline(
     }
   });
 
-  await host.use(backend, trackers[backend]);
+  await host.use("holistic", newTracker);
   await camera.start();
 }
 
@@ -924,8 +876,8 @@ function wireSolverControls(
   folder.add(solver.options, "useHandLandmarks").name("use palm frame");
   // Fingers are on the toolbar, not here: turning them off is something you
   // do mid-stream when they misbehave, and nothing is in both places
-  // (SPEC.md 9.1). They still need the palm frame above -- the pose backend's
-  // three knuckle estimates cannot say anything about a finger.
+  // (SPEC.md 9.1). They still need the palm frame above: the three knuckle
+  // estimates the pose model leaves behind cannot say anything about a finger.
 
   // Degradation constants (SPEC.md 5.7). All provisional and only settleable
   // by watching a limb actually leave frame.

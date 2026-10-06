@@ -1188,5 +1188,76 @@ const allVisible = new Float32Array(LANDMARK_COUNT).fill(1);
   }
 }
 
+/*
+ * --- past the knuckle a finger is a hinge ---------------------------------
+ *
+ * A knuckle flexes and spreads; the two joints beyond it only flex, because
+ * no joint in a finger splays it at the middle or the tip. The tracker will
+ * happily report a sideways middle joint anyway -- that is noise, and giving
+ * it an axis to land on spends twenty bones' worth of the solve on it.
+ */
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+
+  /*
+   * A hand whose index finger is straight at the knuckle but bent SIDEWAYS
+   * at the middle joint -- across the palm, which is the axis no finger has.
+   * Everything else is flat.
+   */
+  const h = makeFullHand("left", 0.65, 1.4, 0);
+  const set = (i: number, p: readonly [number, number, number]): void => {
+    h[i * 3] = p[0]; h[i * 3 + 1] = p[1]; h[i * 3 + 2] = p[2];
+  };
+  const mcp: [number, number, number] = [h[HAND.INDEX_MCP * 3] ?? 0, h[HAND.INDEX_MCP * 3 + 1] ?? 0, h[HAND.INDEX_MCP * 3 + 2] ?? 0];
+  const pip: [number, number, number] = [mcp[0] + 0.039, mcp[1], mcp[2]];
+  set(HAND.INDEX_PIP, pip);
+  // The next two segments veer across the palm (+z) instead of continuing.
+  set(HAND.INDEX_DIP, [pip[0] + 0.016, pip[1], pip[2] + 0.016]);
+  set(HAND.INDEX_TIP, [pip[0] + 0.028, pip[1], pip[2] + 0.030]);
+
+  const bent = project(h);
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: bent, right: null });
+
+  /*
+   * A finger rests along X and curls toward the palm at -Y, so FLEXION is
+   * rotation about Z and SPREAD is rotation about Y. A joint confined to
+   * flexion therefore has no y component in its quaternion.
+   *
+   * Worth stating because getting it the wrong way round is easy, and an
+   * earlier version of this check asserted the z component -- which is the
+   * flexion it is supposed to allow. It passed whether the constraint was
+   * applied or not.
+   */
+  const inter = boneQuat(pose.rotations, "leftIndexIntermediate");
+  check("the middle joint does not splay sideways", Math.abs(inter[1]) < 0.02,
+    `quaternion y is ${inter[1].toFixed(3)}, which is rotation about the spread axis`);
+
+  const distal = boneQuat(pose.rotations, "leftIndexDistal");
+  check("nor does the tip joint", Math.abs(distal[1]) < 0.02,
+    `quaternion y is ${distal[1].toFixed(3)}`);
+
+  // And the knuckle must keep the freedom it is entitled to, or this has
+  // become "fingers cannot spread at all".
+  const spread = makeFullHand("left", 0.65, 1.4, 0);
+  const smcp: [number, number, number] = [spread[HAND.MIDDLE_MCP * 3] ?? 0, spread[HAND.MIDDLE_MCP * 3 + 1] ?? 0, spread[HAND.MIDDLE_MCP * 3 + 2] ?? 0];
+  const put = (i: number, p: readonly [number, number, number]): void => {
+    spread[i * 3] = p[0]; spread[i * 3 + 1] = p[1]; spread[i * 3 + 2] = p[2];
+  };
+  put(HAND.MIDDLE_PIP, [smcp[0] + 0.038, smcp[1], smcp[2] + 0.020]);
+  put(HAND.MIDDLE_DIP, [smcp[0] + 0.061, smcp[1], smcp[2] + 0.032]);
+  put(HAND.MIDDLE_TIP, [smcp[0] + 0.078, smcp[1], smcp[2] + 0.041]);
+
+  const solver2 = makeSolver();
+  solver2.options.fingers = true;
+  const pose2 = createAvatarPose();
+  const splayed = project(spread);
+  for (let i = 0; i < 12; i++) solver2.solve(rest, allVisible, pose2, i * 33.3, { left: splayed, right: null });
+  const knuckle = boneQuat(pose2.rotations, "leftMiddleProximal");
+  check("the knuckle may still spread", Math.abs(knuckle[1]) > 0.05,
+    `quaternion y is ${knuckle[1].toFixed(3)}, which is the spread axis`);
+}
+
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);
 console.log("\nALL PASS");

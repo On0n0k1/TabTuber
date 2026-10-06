@@ -26,7 +26,7 @@ import {
   type HumanBoneName,
 } from "../types.ts";
 import { midpoint, readPoint } from "./coords.ts";
-import { restDirOf } from "./referenceRig.ts";
+import { flexAxisOf, restDirOf } from "./referenceRig.ts";
 import { DEFAULT_IDLE_PARAMS, writeIdleDelta, type IdleParams } from "./idlePose.ts";
 import { RELAXED_POSE } from "./relaxedPose.ts";
 import {
@@ -38,6 +38,7 @@ import {
   identity,
   invert,
   multiply,
+  dot,
   normalize,
   quat,
   rotateV3,
@@ -821,6 +822,34 @@ export class PoseSolver {
          */
         invert(this.qParentInv, parentWorld);
         rotateV3(this.fLocal, this.qParentInv, this.fDir);
+
+        /*
+         * Past the knuckle, a finger is a HINGE.
+         *
+         * The first joint of each chain has two degrees of freedom: it flexes
+         * and it spreads. The two beyond it have one, because there is no
+         * joint in a finger that splays it at the middle or the tip. Letting
+         * the solver put rotation on that axis therefore reproduces nothing
+         * anyone can do, and spends the whole axis on tracking noise -- on
+         * twenty of the thirty bones.
+         *
+         * Flattening the measured direction onto the joint's bending plane
+         * is all it takes: what is left can only bend. A direction lying
+         * along the plane's normal has no bend in it to recover and is left
+         * alone, which cannot happen to a real finger but can to a bad frame.
+         */
+        if (i > 0) {
+          const flex = flexAxisOf(boneName);
+          if (flex) {
+            const sideways = dot(this.fLocal, flex);
+            this.fLocal[0] -= flex[0] * sideways;
+            this.fLocal[1] -= flex[1] * sideways;
+            this.fLocal[2] -= flex[2] * sideways;
+            if (vectorLength(this.fLocal) > 1e-4) normalize(this.fLocal, this.fLocal);
+            else rotateV3(this.fLocal, this.qParentInv, this.fDir);
+          }
+        }
+
         fromUnitVectors(this.qFingerLocal, restDirOf(boneName), this.fLocal);
         multiply(this.qFinger, parentWorld, this.qFingerLocal);
         this.setBone(pose, boneName, this.qFinger, parentWorld, confidence, dt);

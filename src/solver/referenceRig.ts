@@ -17,7 +17,7 @@
  */
 
 import type { HumanBoneName } from "../types.ts";
-import { normalize, sub, v3, type V3 } from "./math.ts";
+import { cross, normalize, sub, v3, type V3 } from "./math.ts";
 
 export interface RestBone {
   readonly name: HumanBoneName;
@@ -123,6 +123,40 @@ export const REST_DIR: ReadonlyMap<HumanBoneName, V3> = new Map([
     normalize(v3(), dir),
   ]),
 ]);
+
+/**
+ * The axis a finger joint bends ABOUT, which is also the normal of the plane
+ * it bends IN -- the two are the same vector for any hinge.
+ *
+ * A knuckle has two degrees of freedom: it flexes, and it spreads sideways.
+ * The joints past it have one. No joint in a finger splays it at the middle
+ * or the tip, so letting the solver put rotation on that axis reproduces
+ * nothing anyone can do and spends the whole axis on tracking noise, across
+ * twenty of the thirty bones.
+ *
+ * Flattening a measured direction onto this plane -- dropping its component
+ * along this vector -- leaves a direction that can only bend. For a finger
+ * resting along the hand axis and curling toward the palm it works out as Z,
+ * so the finger stays in the XY plane; the thumb rests elsewhere and gets its
+ * own.
+ *
+ * Naming this the other way round is an easy mistake and was made once here:
+ * flexion about Z and spread about Y are adjacent enough that a check written
+ * against the wrong one passes whether the constraint is applied or not.
+ */
+const CURL_TOWARD: V3 = [0, -1, 0];
+
+export const FLEX_AXIS: ReadonlyMap<HumanBoneName, V3> = new Map(
+  FINGER_REST_DIR.map(([name, dir]): [HumanBoneName, V3] => [
+    name,
+    normalize(v3(), cross(v3(), normalize(v3(), dir), CURL_TOWARD)),
+  ]),
+);
+
+/** The plane normal to flatten a finger joint onto, or null if it is free. */
+export function flexAxisOf(name: HumanBoneName): Readonly<V3> | null {
+  return FLEX_AXIS.get(name) ?? null;
+}
 
 export function restDirOf(name: HumanBoneName): Readonly<V3> {
   return REST_DIR.get(name) ?? [1, 0, 0];

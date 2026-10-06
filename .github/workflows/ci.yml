@@ -94,7 +94,7 @@ jobs:
 
       - name: Clone On0n0k1.github.io
         run: |
-          git clone --depth 1 https://x-access-token:${{ secrets.PAGES_DEPLOY_TOKEN }}@github.com/On0n0k1/On0n0k1.github.io.git "$RUNNER_TEMP/pages-repo"
+          git clone --depth 1 https://x-access-token:${{ secrets.PAGES_DEPLOY_TOKEN_TABTUBER }}@github.com/On0n0k1/On0n0k1.github.io.git "$RUNNER_TEMP/pages-repo"
 
       # rm -rf before copying so files dropped from the build (a renamed
       # hashed bundle, a retired model) disappear from the site instead of

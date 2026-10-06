@@ -88,6 +88,17 @@ const MODELS = [
   { label: "Avatar B", url: "/models/AvatarSample_B.vrm" },
 ] as const;
 
+/**
+ * Loaded at startup. The first entry, and the smaller of the two.
+ *
+ * It has to be a COMMITTED model. This used to be `avatar.vrm`, which is
+ * gitignored and is not among the files `fetch-assets` stages, so it exists
+ * only on the machine that exported it: a clean clone or any CI build had no
+ * model at all and opened on a failed load. It worked locally for the same
+ * reason the bug was invisible -- the file happened to be sitting there.
+ */
+const DEFAULT_MODEL = MODELS[0];
+
 const POSTURES = ["sitting", "standing"] as const;
 
 /**
@@ -838,7 +849,7 @@ function wireAvatar(
     void avatarSlot.load(buffer, name);
   });
 
-  void avatarSlot.load("/models/avatar.vrm", "avatar.vrm");
+  void avatarSlot.load(DEFAULT_MODEL.url, DEFAULT_MODEL.label);
 }
 
 /**

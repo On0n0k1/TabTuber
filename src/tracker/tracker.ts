@@ -24,6 +24,27 @@ import type { PoseFrame } from "../types.ts";
 export const WASM_PATH = `${import.meta.env.BASE_URL}mediapipe/wasm`;
 
 export type TrackerDelegate = "GPU" | "CPU";
+
+/**
+ * Which delegate to build the graph on.
+ *
+ * `auto` is the shipping behaviour: GPU, with CPU as the fallback when the
+ * graph will not open. The explicit values exist to measure, which `auto`
+ * cannot do -- it reports whichever delegate it landed on, and landing on one
+ * is not the same as having asked for it.
+ *
+ * A forced choice never silently becomes the other one. A measurement that
+ * quietly changes what it is measuring is worse than one that fails, and this
+ * readout is what the mobile default gets decided from (SPEC.md 9.4).
+ */
+export type DelegatePreference = "auto" | "GPU" | "CPU";
+
+export const DELEGATE_PREFERENCES: readonly DelegatePreference[] = [
+  "auto",
+  "GPU",
+  "CPU",
+];
+
 export type PoseFrameHandler = (frame: PoseFrame) => void;
 
 export interface Tracker {
@@ -71,6 +92,10 @@ export function visionFileset(): Promise<VisionFileset> {
 export abstract class VideoTracker<L extends Closeable> implements Tracker {
   abstract readonly name: string;
 
+  protected constructor(
+    private readonly preference: DelegatePreference = "auto",
+  ) {}
+
   protected landmarker: L | null = null;
   private video: HTMLVideoElement | null = null;
   private handle: number | null = null;
@@ -114,14 +139,48 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
     return this.failure;
   }
 
+  /**
+   * Narrows a delegate that a feature makes impossible.
+   *
+   * Overridden rather than handled inside `build`, because this class records
+   * what it built on: a subclass that substituted a delegate privately would
+   * leave the panel reporting one thing while the graph ran on another, and
+   * that readout is load-bearing (SPEC.md 9.4).
+   */
+  protected constrainDelegate(delegate: TrackerDelegate): TrackerDelegate {
+    return delegate;
+  }
+
   async init(): Promise<void> {
     this.failure = null;
+
+    if (this.preference !== "auto") {
+      // Forced: a failure is reported rather than papered over with the other
+      // delegate, so what the panel shows is always what was asked for.
+      const delegate = this.constrainDelegate(this.preference);
+      this.landmarker = await this.build(delegate);
+      this.delegateInUse = delegate;
+      return;
+    }
+
+    const first = this.constrainDelegate("GPU");
     try {
-      this.landmarker = await this.build("GPU");
-      this.delegateInUse = "GPU";
+      this.landmarker = await this.build(first);
+      this.delegateInUse = first;
+      return;
     } catch (err) {
-      // The GPU delegate fails on some drivers and in some headless contexts.
-      // CPU is materially slower but keeps the app usable rather than dead.
+      if (first === "CPU") throw err;
+      /*
+       * The GPU delegate fails outright on some drivers and in some headless
+       * contexts, and CPU keeps the app usable rather than dead.
+       *
+       * Not the slower option on every device, which this comment used to
+       * claim. On mobile the WebGL delegate reads its output tensors back
+       * with synchronous glReadPixels, measured at 73% of the main thread and
+       * 270ms per inference on a phone where CPU does no readback at all
+       * (SPEC.md 9.4). Which one wins is a per-device question, which is why
+       * it can now be forced.
+       */
       console.warn(`${this.name}: GPU delegate unavailable, falling back to CPU`, err);
       this.landmarker = await this.build("CPU");
       this.delegateInUse = "CPU";

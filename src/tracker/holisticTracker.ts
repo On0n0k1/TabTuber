@@ -29,7 +29,12 @@ import {
   type HandFrame,
   type PoseFrame,
 } from "../types.ts";
-import { VideoTracker, visionFileset, type TrackerDelegate } from "./tracker.ts";
+import {
+  VideoTracker,
+  visionFileset,
+  type DelegatePreference,
+  type TrackerDelegate,
+} from "./tracker.ts";
 
 const MODEL_PATH = `${import.meta.env.BASE_URL}models/holistic_landmarker.task`;
 
@@ -52,6 +57,13 @@ export interface HolisticTrackerOptions {
    * rebuilds.
    */
   readonly faceBlendshapes?: boolean;
+  /**
+   * Which delegate to build on; `auto` is GPU with a CPU fallback.
+   *
+   * Set when the tracker is constructed, like `faceBlendshapes`, because the
+   * delegate is fixed when the graph opens. Changing it rebuilds.
+   */
+  readonly delegate?: DelegatePreference;
 }
 
 /** Mutable hand buffer; the frame exposes it as a readonly HandFrame. */
@@ -88,23 +100,29 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
   };
 
   constructor(options: HolisticTrackerOptions = {}) {
-    super();
+    super(options.delegate ?? "auto");
     this.options = options;
+  }
+
+  /**
+   * On GPU the blendshape graph fails to open and takes the whole pipeline
+   * down with it, so the delegate is narrowed here rather than requested --
+   * honouring a GPU choice would just mean a tracker that throws on its first
+   * frame. Reported through the base class, so the panel shows CPU.
+   */
+  protected override constrainDelegate(delegate: TrackerDelegate): TrackerDelegate {
+    if (!this.options.faceBlendshapes) return delegate;
+    if (delegate !== "CPU") {
+      console.info("holistic: face blendshapes require the CPU delegate");
+    }
+    return "CPU";
   }
 
   protected override async build(delegate: TrackerDelegate): Promise<HolisticLandmarker> {
     const fileset = await visionFileset();
 
-    // Forced rather than requested: on GPU the blendshape graph fails to open
-    // and takes the whole pipeline down with it, so honouring the caller's
-    // delegate here would just mean a tracker that throws on its first frame.
-    const wanted = this.options.faceBlendshapes ? "CPU" : delegate;
-    if (this.options.faceBlendshapes && delegate !== "CPU") {
-      console.info("holistic: face blendshapes require the CPU delegate");
-    }
-
     return HolisticLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_PATH, delegate: wanted },
+      baseOptions: { modelAssetPath: MODEL_PATH, delegate },
       runningMode: "VIDEO",
       minPoseDetectionConfidence: this.options.minPoseDetectionConfidence ?? 0.6,
       minPosePresenceConfidence: this.options.minPosePresenceConfidence ?? 0.6,

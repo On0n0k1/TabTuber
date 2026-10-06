@@ -49,7 +49,11 @@ import { BONE_INDEX, type HumanBoneName,
 } from "./types.ts";
 import { HolisticTracker } from "./tracker/holisticTracker.ts";
 import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
-import type { Tracker } from "./tracker/tracker.ts";
+import {
+  DELEGATE_PREFERENCES,
+  type DelegatePreference,
+  type Tracker,
+} from "./tracker/tracker.ts";
 import { TrackerHost } from "./tracker/trackerHost.ts";
 import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
@@ -134,9 +138,24 @@ function boot(): void {
   // Holistic is the only backend (SPEC.md 11). Face blendshapes force the CPU
   // delegate, so that choice is made when the tracker is built and changing it
   // rebuilds (see HolisticTrackerOptions).
-  const trackerConfig = { faceBlendshapes: false };
+  const trackerConfig = {
+    faceBlendshapes: false,
+    /*
+     * Remembered, because the whole point is to compare devices: the phone
+     * and the desktop want different answers and re-choosing on every load
+     * would make a measurement session tedious enough to skip (SPEC.md 9.4).
+     */
+    delegate: readSetting<DelegatePreference>(
+      "delegate",
+      DELEGATE_PREFERENCES,
+      "auto",
+    ),
+  };
   const newTracker = (): Tracker =>
-    new HolisticTracker({ faceBlendshapes: trackerConfig.faceBlendshapes });
+    new HolisticTracker({
+      faceBlendshapes: trackerConfig.faceBlendshapes,
+      delegate: trackerConfig.delegate,
+    });
 
   const host = new TrackerHost();
   /*
@@ -424,6 +443,7 @@ function boot(): void {
   // After wireLipSync, so a permission failure has a banner handler to land in.
   if (micEnabled) applyMic(true);
   wireTrackingReadouts(panel, solver);
+  wireTrackerControls(panel, trackerConfig, rebuildTracker);
   // Visible so a correction is something you can see happening rather than
   // infer from the avatar looking right.
   panel.addReadoutGroup(
@@ -964,6 +984,30 @@ function wireTrackingReadouts(panel: DebugPanel, solver: PoseSolver): void {
   panel.addReadoutGroup("Tracking", bones, () =>
     indices.map((i) => solver.weights[i] ?? 0),
   );
+}
+
+/**
+ * The tracker's own cost controls (SPEC.md 9.4).
+ *
+ * Separate from the Tracking folder, which reports what the solver is doing
+ * with the landmarks. These decide what producing them costs, and they are
+ * the two numbers a slow device is diagnosed with.
+ */
+function wireTrackerControls(
+  panel: DebugPanel,
+  config: { delegate: DelegatePreference },
+  rebuild: () => void,
+): void {
+  const folder = panel.folder("Tracker");
+  folder
+    .add(config, "delegate", DELEGATE_PREFERENCES as DelegatePreference[])
+    .name("delegate")
+    .onChange((value: DelegatePreference) => {
+      writeSetting("delegate", value);
+      // The delegate is chosen when the graph opens, so this cannot be
+      // applied to a running tracker (see HolisticTrackerOptions).
+      rebuild();
+    });
 }
 
 /**

@@ -1259,5 +1259,62 @@ const allVisible = new Float32Array(LANDMARK_COUNT).fill(1);
     `quaternion y is ${knuckle[1].toFixed(3)}, which is the spread axis`);
 }
 
+/*
+ * --- the thumb is not hinged ----------------------------------------------
+ *
+ * A finger closes toward the palm; a thumb closes across it, in a plane
+ * roughly perpendicular to its neighbours'. Deriving its bending plane the
+ * way theirs is derived puts it about ninety degrees out, and flattening a
+ * thumb onto the wrong plane is worse than leaving it alone -- which is how
+ * it was found, by the thumb going messy when the constraint arrived.
+ */
+{
+  const solver = makeSolver();
+  solver.options.fingers = true;
+  const pose = createAvatarPose();
+
+  /*
+   * The thumb bent ALONG the axis a finger-style hinge would discard.
+   *
+   * A finger's bending plane has its normal at cross(rest, toward the palm),
+   * which for the thumb's rest works out near (0.650, 0, -0.760). Moving the
+   * thumb along that vector is precisely the motion such a hinge flattens to
+   * nothing, so it is the motion this check has to use -- a thumb bent any
+   * other way survives the wrong constraint and proves nothing.
+   */
+  const h = makeFullHand("left", 0.65, 1.4, 0);
+  const cmc: [number, number, number] = [h[HAND.THUMB_CMC * 3] ?? 0, h[HAND.THUMB_CMC * 3 + 1] ?? 0, h[HAND.THUMB_CMC * 3 + 2] ?? 0];
+  const put = (i: number, p: readonly [number, number, number]): void => {
+    h[i * 3] = p[0]; h[i * 3 + 1] = p[1]; h[i * 3 + 2] = p[2];
+  };
+  // Metacarpal at its rest, so only the joints past it are being tested.
+  const mcp: [number, number, number] = [
+    cmc[0] + 0.036 * 0.759, cmc[1] + 0.036 * -0.044, cmc[2] + 0.036 * 0.649,
+  ];
+  put(HAND.THUMB_MCP, mcp);
+  // rest (0.787, -0.034, 0.616) pushed halfway along (0.650, 0, -0.760).
+  const bentDir: [number, number, number] = [0.978, -0.030, 0.208];
+  const ip: [number, number, number] = [
+    mcp[0] + 0.031 * bentDir[0], mcp[1] + 0.031 * bentDir[1], mcp[2] + 0.031 * bentDir[2],
+  ];
+  put(HAND.THUMB_IP, ip);
+  put(HAND.THUMB_TIP, [
+    ip[0] + 0.025 * bentDir[0], ip[1] + 0.025 * bentDir[1], ip[2] + 0.025 * bentDir[2],
+  ]);
+
+  const bent = project(h);
+  for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: bent, right: null });
+
+  const prox = angleOf(boneQuat(pose.rotations, "leftThumbProximal"));
+  check("a thumb joint follows the landmarks on any axis", prox > 2,
+    `${prox.toFixed(1)} degrees; a hinge in the fingers' plane would flatten this away`);
+
+  // And the fingers beside it stay constrained, so the exemption is the
+  // thumb's alone.
+  const inter = boneQuat(pose.rotations, "leftIndexIntermediate");
+  check("exempting the thumb does not exempt the fingers", Math.abs(inter[1]) < 0.02,
+    `index intermediate quaternion y is ${inter[1].toFixed(3)}`);
+}
+
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);
 console.log("\nALL PASS");

@@ -147,10 +147,31 @@ export const REST_DIR: ReadonlyMap<HumanBoneName, V3> = new Map([
 const CURL_TOWARD: V3 = [0, -1, 0];
 
 export const FLEX_AXIS: ReadonlyMap<HumanBoneName, V3> = new Map(
-  FINGER_REST_DIR.map(([name, dir]): [HumanBoneName, V3] => [
-    name,
-    normalize(v3(), cross(v3(), normalize(v3(), dir), CURL_TOWARD)),
-  ]),
+  FINGER_REST_DIR
+    /*
+     * THE THUMB IS EXEMPT, and gets no constraint at all.
+     *
+     * CURL_TOWARD is the direction a digit closes in, and a finger closes
+     * toward the palm. A thumb does not: it closes ACROSS the palm, in a
+     * plane roughly perpendicular to the one its neighbours use. Deriving its
+     * bending plane the same way puts it about ninety degrees out, and
+     * flattening a thumb onto the wrong plane is worse than not flattening
+     * it -- it was visibly correct before this constraint existed and visibly
+     * messy with it.
+     *
+     * Its own plane could be given instead of taken away. That needs a curl
+     * direction for the thumb, and a guess is what caused this; measuring one
+     * needs thumb-flexion data that nothing here produces. The thumb is also
+     * the most mobile digit, with a saddle joint at its base that genuinely
+     * does rotate on two axes, so the anatomical argument for constraining it
+     * is the weakest of the five -- and the prize is noise on four bones out
+     * of thirty.
+     */
+    .filter(([name]) => !name.includes("Thumb"))
+    .map(([name, dir]): [HumanBoneName, V3] => [
+      name,
+      normalize(v3(), cross(v3(), normalize(v3(), dir), CURL_TOWARD)),
+    ]),
 );
 
 /** The plane normal to flatten a finger joint onto, or null if it is free. */

@@ -179,6 +179,15 @@ export function isFingerBone(bone: HumanBoneName): boolean {
   return FINGER_BONES.has(bone);
 }
 
+/** The six leg bones, which fall back toward the floor rather than the hips. */
+export const LEG_BONES: ReadonlySet<HumanBoneName> = new Set(
+  DRIVEN_BONES.filter((b) => /UpperLeg|LowerLeg|Foot/.test(b)),
+);
+
+export function isLegBone(bone: HumanBoneName): boolean {
+  return LEG_BONES.has(bone);
+}
+
 /** Index of each bone within an AvatarPose rotation buffer. */
 export const BONE_INDEX: Readonly<Record<HumanBoneName, number>> =
   Object.freeze(

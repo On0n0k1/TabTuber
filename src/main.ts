@@ -916,6 +916,9 @@ function wireSolverControls(
   // On by default but switchable, since it targets a specific failure of one
   // model and a tracker without it would not need the correction.
   folder.add(solver.options, "correctHandDepthFlip").name("fix hand depth flip");
+  // Switchable so the hallucinated-leg behaviour can be seen for what it is,
+  // which is the only way to tell the guard is doing anything.
+  folder.add(solver.options, "rejectRaisedLegs").name("ignore raised legs");
   folder.add(solver.options, "flipMinArea", 0, 0.5, 0.01).name("flip: min area");
   folder.add(solver.options, "flipHysteresis", 1, 10, 1).name("flip: frames");
   folder.add(solver.options, "useHandLandmarks").name("use palm frame");

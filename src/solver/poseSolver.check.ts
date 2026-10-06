@@ -13,6 +13,7 @@
  */
 
 import { LM } from "../tracker/landmarks.ts";
+import { restDirOf } from "./referenceRig.ts";
 import { HIP_HEIGHT_M, mirrorScalars, mpToThree } from "./coords.ts";
 import { BONE_INDEX, LANDMARK_COUNT, createAvatarPose, type HumanBoneName } from "../types.ts";
 import { PoseSolver, type HandInput } from "./poseSolver.ts";
@@ -1314,6 +1315,111 @@ const allVisible = new Float32Array(LANDMARK_COUNT).fill(1);
   const inter = boneQuat(pose.rotations, "leftIndexIntermediate");
   check("exempting the thumb does not exempt the fingers", Math.abs(inter[1]) < 0.02,
     `index intermediate quaternion y is ${inter[1].toFixed(3)}`);
+}
+
+/*
+ * --- a lost shin hangs down, it does not follow the thigh -----------------
+ *
+ * Every other bone's relaxed pose is a local rotation, so an untracked one
+ * keeps doing whatever its parent does -- an arm hangs from the shoulder,
+ * which is what an arm does. A shin that inherits a bent thigh sticks out
+ * behind the knee. Legs are expressed against the floor instead.
+ *
+ * Note the UPPER leg cannot show this: its parent is the hips, and solveTorso
+ * never writes the hips -- the whole torso rotation goes to spine, chest and
+ * upperChest above them. An earlier version of this check leaned the torso
+ * and watched the thigh, and passed whether the fix was present or not.
+ */
+{
+  const solver = makeSolver();
+  solver.options.posture = "standing";
+  const pose = createAvatarPose();
+
+  /** A pose with the knee well forward of the hip, so the thigh is bent. */
+  const kneeForward = (): Float32Array => {
+    const p = restPoseLandmarks();
+    p[LM.LEFT_KNEE * 3 + 2] = 0.34;
+    p[LM.LEFT_KNEE * 3 + 1] = 0.55;
+    return p;
+  };
+
+  /** Where the shin points in WORLD space, which is what a viewer sees. */
+  const shinWorld = (): V3 => {
+    const w = quat();
+    mulQ4(w, boneQuat(pose.rotations, "hips"), boneQuat(pose.rotations, "leftUpperLeg"));
+    mulQ4(w, w, boneQuat(pose.rotations, "leftLowerLeg"));
+    const out = v3();
+    return rotateV3(out, w, restDirOf("leftLowerLeg") as V3);
+  };
+
+  /*
+   * The thigh stays tracked and bent; the shin is lost.
+   *
+   * The KNEE has to go invisible too, not just the ankle. Confidence is the
+   * mean over a bone's two landmarks, so a visible knee and a lost ankle
+   * average to 0.5 -- which lands exactly on the default threshold and
+   * smoothsteps to a weight of one. The shin would be fully tracked and the
+   * fallback never consulted, which is how the first version of this check
+   * came to fail for a reason that had nothing to do with the fix.
+   *
+   * The thigh survives it: hip 1 and knee 0 also average 0.5, and the same
+   * smoothstep keeps it driven.
+   */
+  const vis = new Float32Array(LANDMARK_COUNT).fill(1);
+  for (const i of [LM.LEFT_KNEE, LM.LEFT_ANKLE, LM.LEFT_HEEL, LM.LEFT_FOOT_INDEX]) vis[i] = 0;
+  const bent = kneeForward();
+  for (let i = 0; i < 300; i++) solver.solve(bent, vis, pose, i * 33.3);
+
+  const shin = shinWorld();
+  const fromDown = (Math.acos(Math.min(1, Math.max(-1, -shin[1]))) * 180) / Math.PI;
+  check("a lost shin hangs toward the floor rather than following the thigh",
+    fromDown < 10, `${fromDown.toFixed(1)} degrees off vertical under a bent thigh`);
+}
+
+
+/*
+ * --- a leg that points upward is not believed -----------------------------
+ *
+ * The tracker reports CONFIDENT visibility for legs that have left the frame
+ * and puts them somewhere arbitrary (SPEC.md 5.8), so a hallucinated knee
+ * lands above the hip and the leg swings up through the body. The direction
+ * is evidence the landmarks are wrong whatever confidence arrived with them.
+ */
+{
+  /** A knee hallucinated ABOVE the hip, reported as fully visible. */
+  const kneeAboveHip = (): Float32Array => {
+    const p = restPoseLandmarks();
+    p[LM.LEFT_KNEE * 3 + 1] = 1.25;
+    p[LM.LEFT_ANKLE * 3 + 1] = 1.45;
+    return p;
+  };
+
+  const thighWorld = (pose: ReturnType<typeof createAvatarPose>): V3 => {
+    const w = quat();
+    mulQ4(w, boneQuat(pose.rotations, "hips"), boneQuat(pose.rotations, "leftUpperLeg"));
+    const out = v3();
+    return rotateV3(out, w, restDirOf("leftUpperLeg") as V3);
+  };
+
+  const run = (reject: boolean): number => {
+    const solver = makeSolver();
+    solver.options.posture = "standing";
+    solver.options.rejectRaisedLegs = reject;
+    const pose = createAvatarPose();
+    const vis = new Float32Array(LANDMARK_COUNT).fill(1);
+    for (let i = 0; i < 300; i++) solver.solve(kneeAboveHip(), vis, pose, i * 33.3);
+    const thigh = thighWorld(pose);
+    return (Math.acos(Math.min(1, Math.max(-1, -thigh[1]))) * 180) / Math.PI;
+  };
+
+  const guarded = run(true);
+  check("a thigh reported above the hip is disbelieved", guarded < 10,
+    `${guarded.toFixed(1)} degrees off vertical`);
+
+  // The guard has to be what is doing it, not the gating underneath.
+  const unguarded = run(false);
+  check("and without the guard it would swing up", unguarded > 90,
+    `${unguarded.toFixed(1)} degrees off vertical, so the leg is above horizontal`);
 }
 
 if (failures > 0) throw new Error(`${failures} solver check failure(s)`);

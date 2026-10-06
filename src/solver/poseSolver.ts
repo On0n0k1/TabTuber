@@ -22,6 +22,7 @@ import {
   BONE_COUNT,
   DRIVEN_BONES,
   isFingerBone,
+  isLegBone,
   type AvatarPose,
   type HumanBoneName,
 } from "../types.ts";
@@ -111,6 +112,16 @@ export interface SolverOptions {
    */
   useHandLandmarks: boolean;
   /**
+   * Disbelieve a leg segment that points upward (SPEC.md 5.8).
+   *
+   * The tracker reports confident visibility for legs that have left the
+   * frame and puts them somewhere arbitrary, so a hallucinated knee above the
+   * hip swings the leg up through the body. No leg does that, so the
+   * direction is evidence the landmarks are wrong regardless of what
+   * confidence came with them.
+   */
+  rejectRaisedLegs: boolean;
+  /**
    * Drive the 30 finger bones from the hand landmarks (SPEC.md 12, item 3).
    *
    * Off by default and experimental. Fingers make residual jitter MORE
@@ -164,6 +175,7 @@ export const DEFAULT_SOLVER_OPTIONS: SolverOptions = {
   maxTwistDegrees: 160,
   posture: "sitting",
   useHandLandmarks: true,
+  rejectRaisedLegs: true,
   fingers: false,
   visibilityThreshold: 0.5,
   blendBand: 0.25,
@@ -298,6 +310,22 @@ const FINGER_CHAINS: readonly {
     bones: ["LittleProximal", "LittleIntermediate", "LittleDistal"],
   },
 ];
+
+/**
+ * How far above horizontal a leg segment may point before it is disbelieved.
+ *
+ * A thigh goes down, or forward when the knee is raised. It does not go UP --
+ * not from a chair, not from standing, not in anything a performer does at a
+ * desk. The tracker does not know that: it reports confident visibility for
+ * legs that have left the frame (SPEC.md 5.8), and where it puts them is
+ * arbitrary, so a hallucinated knee lands above the hip and the leg swings up
+ * through the body.
+ *
+ * Ten degrees of slack, which covers a knee raised to just past horizontal
+ * and nothing a leg cannot do. Expressed as the sine because that is what a
+ * normalised direction's Y component is (SPEC.md 12.1).
+ */
+const MAX_LEG_RISE = Math.sin((10 * Math.PI) / 180);
 
 const TRUSTWORTHY = 0.9;
 
@@ -446,15 +474,23 @@ export class PoseSolver {
     this.solveArm(points, visibility, pose, "left", dt, hands?.left ?? null);
     this.solveArm(points, visibility, pose, "right", dt, hands?.right ?? null);
 
-    if (this.options.posture === "standing") {
-      this.solveLeg(points, visibility, pose, "left", dt);
-      this.solveLeg(points, visibility, pose, "right", dt);
-    }
+    /*
+     * Legs are written in BOTH postures, and only standing reads landmarks.
+     *
+     * Sitting used to skip them entirely, leaving resetAll's identity in
+     * place -- which is a local rotation, so the legs inherited the hips and
+     * swung up whenever the chest leaned. Writing them with no confidence
+     * sends them through the gating path instead, where the leg fallback is
+     * expressed against the floor (see setBone). The character then reads as
+     * standing whatever the subject's lower body is doing, which is what
+     * SPEC.md 5.8 intended all along.
+     */
+    const legsTracked = this.options.posture === "standing";
+    this.solveLeg(points, visibility, pose, "left", dt, legsTracked);
+    this.solveLeg(points, visibility, pose, "right", dt, legsTracked);
 
     this.solveSway(imagePoints, pose, dt);
-    // In sitting posture the legs stay at rest, which is a standing pose for
-    // them, so the character reads as standing regardless of what the
-    // subject's lower body is doing (SPEC.md 5.8). Eyes are procedural (§8).
+    // Eyes are procedural (SPEC.md 8).
   }
 
   /** Bones no solver stage writes must be at rest, not stale from last frame. */
@@ -530,7 +566,25 @@ export class PoseSolver {
           ? 1
           : Math.min(1, Math.max(0, (age - opts.holdSeconds) / opts.decaySeconds));
 
-      slerp(this.qFallback, this.lastGood[idx] as Q4, RELAXED_POSE[idx] as Q4, decay);
+      /*
+       * Legs fall back toward the FLOOR, not toward their parent.
+       *
+       * Every other bone's relaxed pose is a local rotation, so an untracked
+       * one keeps whatever its parent is doing -- an arm hangs from the
+       * shoulder, which is what an arm does. A leg that inherits the hips
+       * swings up as the chest leans, because leaning the torso rotates the
+       * hips and the legs come along. Legs do not do that: a standing person
+       * leaning forward still has their legs under them.
+       *
+       * `qInv` is the inverse of the parent's world rotation, which is
+       * already computed above to turn the solved world rotation into a local
+       * one. Using it as the relaxed target sets this bone's WORLD rotation
+       * to identity, which is its rest direction -- straight down for a leg.
+       * So the fallback is expressed against the floor while every other
+       * bone's stays against its parent.
+       */
+      const relaxed = isLegBone(bone) ? this.qInv : (RELAXED_POSE[idx] as Q4);
+      slerp(this.qFallback, this.lastGood[idx] as Q4, relaxed, decay);
       slerp(this.qFinal, this.qFallback, this.qSolved, weight);
     }
 
@@ -907,6 +961,7 @@ export class PoseSolver {
     pose: AvatarPose,
     side: Side,
     dt: number,
+    tracked: boolean,
   ): void {
     const lm = LEG[side];
     const hips = this.worldOf("hips");
@@ -918,7 +973,24 @@ export class PoseSolver {
     readPoint(this.pb, points, lm.knee);
     normalize(this.axisX, sub(this.axisX, this.pb, this.pa));
     fromUnitVectors(this.qa, restDirOf(upperBone), this.axisX);
-    this.setBone(pose, upperBone, this.qa, hips, meanVisibility(visibility, [lm.hip, lm.knee]), dt);
+    /*
+     * Untracked legs are written with no confidence rather than skipped. At
+     * zero weight setBone ignores the rotation entirely and returns the
+     * fallback, so what is passed does not matter -- only that the bone is
+     * written, which is what keeps it off the identity resetAll left behind.
+     *
+     * A segment pointing upward is disbelieved outright, whatever the tracker
+     * says its visibility is. That combination -- confident about a landmark
+     * it has invented -- is the documented failure for out-of-frame legs, and
+     * believing it even partly is what swings a leg up through the body.
+     */
+    const confidence = (landmarks: readonly number[], direction: Readonly<V3>): number => {
+      if (!tracked) return 0;
+      if (this.options.rejectRaisedLegs && (direction[1] ?? 0) > MAX_LEG_RISE) return 0;
+      return meanVisibility(visibility, landmarks);
+    };
+
+    this.setBone(pose, upperBone, this.qa, hips, confidence([lm.hip, lm.knee], this.axisX), dt);
 
     readPoint(this.pc, points, lm.ankle);
     normalize(this.axisY, sub(this.axisY, this.pc, this.pb));
@@ -928,7 +1000,7 @@ export class PoseSolver {
       lowerBone,
       this.qb,
       this.worldOf(upperBone),
-      meanVisibility(visibility, [lm.knee, lm.ankle]),
+      confidence([lm.knee, lm.ankle], this.axisY),
       dt,
     );
 
@@ -940,7 +1012,9 @@ export class PoseSolver {
       footBone,
       this.qa,
       this.worldOf(lowerBone),
-      meanVisibility(visibility, [lm.ankle, lm.heel, lm.foot]),
+      // The foot is the one segment that legitimately points forward and
+      // slightly up, so it is judged on the shin above it instead.
+      confidence([lm.ankle, lm.heel, lm.foot], this.axisY),
       dt,
     );
   }

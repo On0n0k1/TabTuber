@@ -3,6 +3,12 @@ name: CI
 on:
   push:
   pull_request:
+  # Manual runs are deliberately test-only: `release` and `deploy` below gate
+  # on `github.event_name == 'push'`, which a dispatch is not. So this is a
+  # safe way to re-run the checks against main without cutting a release or
+  # touching the live site. Re-deploying is done with "Re-run failed jobs" on
+  # the original push's run, which keeps the push gate honest.
+  workflow_dispatch:
 
 jobs:
   # Typecheck, the .check.ts suite, and the build. The project has never run

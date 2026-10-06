@@ -30,19 +30,6 @@ export interface FaceParams {
   /** Drive eye direction from the camera. */
   trackGaze: boolean;
   /**
-   * Report how far the camera says the jaw is open, for the mouth to use
-   * while nothing is being said (SPEC.md 8.2).
-   *
-   * Only the jaw. SPEC.md 13.4 found jaw among the robust half of the
-   * blendshape set and the vowel-shaping ones among the weak, and a silent
-   * mouth reads as open or shut anyway -- nobody lip-reads an avatar.
-   *
-   * Experimental, and off by default: the mouth is the one thing SPEC.md 13.3
-   * deliberately kept away from the camera, because viewers notice lip sync
-   * more than anything else on a face.
-   */
-  trackMouth: boolean;
-  /**
    * Treat blinking as open-or-shut rather than a continuous amount.
    *
    * Blinking is very nearly binary in life, and the tracker's reading is
@@ -120,7 +107,6 @@ export const DEFAULT_FACE_PARAMS: FaceParams = {
   enabled: true,
   trackBlink: true,
   trackGaze: true,
-  trackMouth: false,
   blinkSnap: true,
   blinkSpeed: 0.06,
   blinkLow: 0.15,
@@ -151,15 +137,6 @@ export class FaceSolver {
    * whether a small movement is a weak signal or a low gain.
    */
   readonly rawGaze = { x: 0, y: 0 };
-  /**
-   * How far the camera says the jaw is open, 0 to 1, or null when it is not
-   * being asked.
-   *
-   * Null rather than zero, because zero is a real answer -- a shut mouth --
-   * and the mouth has to tell "the camera says closed" from "there is no
-   * camera mouth", which decide different things.
-   */
-  jawOpen: number | null = null;
 
   /** Latched open/shut state per eye, and the eyelid's travel toward it. */
   private readonly shut = { left: false, right: false };
@@ -192,8 +169,6 @@ export class FaceSolver {
       // defines all three, closing the eyes twice over.
       out.set("blink", 0);
     }
-
-    this.jawOpen = this.params.trackMouth ? shape(scores, "jawOpen") : null;
 
     if (this.params.trackGaze) {
       // Up and down mean the same thing for both eyes, so averaging the pair

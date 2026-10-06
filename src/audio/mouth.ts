@@ -40,17 +40,6 @@ export interface MouthParams {
   maxHold: number;
   /** Below this energy the mouth is treated as closed and the cycle resets. */
   silence: number;
-  /**
-   * Seconds for the mouth to hand back from the voice to the camera.
-   *
-   * Asymmetric on purpose: the voice takes the mouth INSTANTLY and gives it
-   * back slowly. Speech must never lag, so there can be no fade in that
-   * direction. Coming back the other way has to be unhurried, because the
-   * speech gate can drop for a moment inside a sentence, and a mouth that
-   * flicked to the camera and back on every such gap is exactly the lip-sync
-   * artefact SPEC.md 13.3 kept the camera away from the mouth to avoid.
-   */
-  cameraHandover: number;
 }
 
 export const DEFAULT_MOUTH_PARAMS: MouthParams = {
@@ -62,9 +51,6 @@ export const DEFAULT_MOUTH_PARAMS: MouthParams = {
   minHold: 0.09,
   maxHold: 0.2,
   silence: 0.04,
-  // Longer than the speech gate's own hangover, so a gap the gate does not
-  // absorb still does not reach the mouth.
-  cameraHandover: 0.4,
 };
 
 /**
@@ -88,13 +74,6 @@ export class Mouth {
   private current: Viseme = "aa";
   private next: Viseme = "ih";
   private held = 0;
-  /**
-   * How much of the mouth the voice currently owns, 1 to 0.
-   *
-   * 1 the instant there is something to say, released over cameraHandover
-   * once there is not. The camera's contribution is scaled by what is left.
-   */
-  private voiceShare = 0;
   private hold = 0.12;
 
   constructor() {
@@ -122,62 +101,22 @@ export class Mouth {
    * frame; `vowel` mode scales it by the envelope and uses it in place of the
    * cycle. Without it, `vowel` behaves as `animated`.
    */
-  /**
-   * `cameraJaw` is how far the camera says the jaw is open, 0 to 1, or null
-   * when there is no camera mouth to use.
-   *
-   * Only the jaw, deliberately. SPEC.md 13.4 measured the blendshape set and
-   * found jaw among the robust half and the vowel-shaping ones -- pucker,
-   * funnel, stretch -- among the weak. A silent mouth reads as open or shut
-   * anyway; nobody lip-reads an avatar, so the shape of a soundless vowel
-   * carries almost nothing while being the part most likely to be wrong.
-   */
   update(
     energy: number,
     dt: number,
     out: Map<string, number>,
     vowelWeights?: ReadonlyMap<string, number> | null,
-    cameraJaw?: number | null,
   ): void {
     for (const v of VISEMES) out.set(v, 0);
 
     const open = Math.min(1, energy) * this.params.openness;
-    const voiced = open > this.params.silence;
+    if (open <= this.params.silence) {
+      // Reset rather than freeze, so the next utterance does not resume
+      // mid-shape from whatever was held when you stopped.
+      this.held = this.hold;
+      return;
+    }
 
-    /*
-     * How much of the mouth the voice still owns. Straight to 1 when there is
-     * something to say, and released over cameraHandover when there is not.
-     */
-    this.voiceShare = voiced
-      ? 1
-      : Math.max(0, this.voiceShare - dt / Math.max(this.params.cameraHandover, 1e-4));
-
-    if (voiced) this.writeVoice(open, dt, out, vowelWeights);
-    // Reset rather than freeze, so the next utterance does not resume
-    // mid-shape from whatever was held when you stopped.
-    else this.held = this.hold;
-
-    if (cameraJaw === null || cameraJaw === undefined) return;
-
-    /*
-     * The larger of the two, which as the code stands is always the camera's:
-     * the voice only writes a viseme on a frame it owns outright, and on any
-     * such frame the camera's share is scaled to zero. The two cannot both be
-     * non-zero, so this is defensive rather than load-bearing -- and it is
-     * the right defence, since a mouth cannot be opened twice and summing
-     * would push past the openness ceiling every other path respects.
-     */
-    const fromCamera = cameraJaw * this.params.openness * (1 - this.voiceShare);
-    out.set("aa", Math.max(out.get("aa") ?? 0, fromCamera));
-  }
-
-  /** The voice-driven visemes, unchanged by anything the camera does. */
-  private writeVoice(
-    open: number,
-    dt: number,
-    out: Map<string, number>,
-    vowelWeights?: ReadonlyMap<string, number> | null,
-  ): void {
     if (this.params.mode === "amplitude") {
       out.set("aa", open);
       return;

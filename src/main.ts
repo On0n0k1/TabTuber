@@ -718,18 +718,11 @@ function boot(): void {
       blendVisemes(mic.vowelPoint, vowelRefs, vowelWeights);
     }
 
-    /*
-     * The camera's jaw is offered only while a face is actually present. The
-     * solver's own value goes stale the moment tracking stops, and a jaw
-     * frozen half open would hold the mouth there for as long as the face was
-     * missing.
-     */
     mouth.update(
       mic.sampleAt(interpolator.current.timestampMs),
       dt,
       interpolator.current.expressions,
       vowelRefs ? vowelWeights : null,
-      face?.present ? faceSolver.jawOpen : null,
     );
 
     // Last of the expression writers, so a chosen expression wins over
@@ -1149,9 +1142,6 @@ function wireFaceControls(panel: DebugPanel, face: FaceSolver): void {
   folder.add(face.params, "enabled").name("apply to avatar");
   folder.add(face.params, "trackBlink").name("blink from camera");
   folder.add(face.params, "trackGaze").name("gaze from camera");
-  // Experimental (SPEC.md 8.2). The voice keeps the mouth whenever there is
-  // one; this only covers a mouth moving in silence.
-  folder.add(face.params, "trackMouth").name("mouth from camera");
   folder.add(face.params, "blinkSnap").name("blink is open/shut");
   folder.add(face.params, "blinkLow", 0, 1, 0.01).name("eyes open below");
   folder.add(face.params, "blinkHigh", 0, 1, 0.01).name("eyes shut above");

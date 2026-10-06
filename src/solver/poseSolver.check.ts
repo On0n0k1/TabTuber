@@ -14,6 +14,7 @@
 
 import { LM } from "../tracker/landmarks.ts";
 import { restDirOf } from "./referenceRig.ts";
+import { RELAXED_POSE } from "./relaxedPose.ts";
 import { HIP_HEIGHT_M, mirrorScalars, mpToThree } from "./coords.ts";
 import { BONE_INDEX, LANDMARK_COUNT, createAvatarPose, type HumanBoneName } from "../types.ts";
 import { PoseSolver, type HandInput } from "./poseSolver.ts";
@@ -1128,13 +1129,15 @@ const allVisible = new Float32Array(LANDMARK_COUNT).fill(1);
 }
 
 /*
- * --- a lost finger holds, it does not relax -------------------------------
+ * --- a finger holds while its hand is there, and relaxes once it is not ---
  *
- * A limb that leaves frame is usually gone, so relaxing it is the better
- * guess. A finger is almost never gone: it is behind another finger, or lost
- * to one bad frame, while its hand is still being tracked in plain view.
- * Relaxing it changes the shape of a visible hand for something the performer
- * did not do.
+ * Two different losses. A finger whose hand is visible is behind another
+ * finger or lost to one bad frame, and relaxing it changes the shape of a
+ * hand you can see. A finger whose HAND has gone is below the camera with the
+ * rest of it, and freezing is no better there than a frozen arm would be.
+ *
+ * The hand bone's own gate weight decides, being the mean over the wrist and
+ * the index and pinky knuckles.
  */
 {
   const solver = makeSolver();
@@ -1144,19 +1147,32 @@ const allVisible = new Float32Array(LANDMARK_COUNT).fill(1);
   const curled = project(makeFullHand("left", 0.65, 1.4, 25));
   for (let i = 0; i < 12; i++) solver.solve(rest, allVisible, pose, i * 33.3, { left: curled, right: null });
   const held = angleOf(boneQuat(pose.rotations, "leftIndexProximal"));
-  check("a tracked finger is bent before the hand is lost", held > 15, `${held.toFixed(1)} deg`);
+  check("a tracked finger is bent before anything is lost", held > 15, `${held.toFixed(1)} deg`);
 
-  // The hand disappears, for much longer than hold + decay would allow a limb.
-  const invisible = new Float32Array(LANDMARK_COUNT).fill(0);
+  /*
+   * Hand landmarks gone, body still fully visible. The hand bone is still
+   * driven -- solveHandFromPose works off the pose model's wrist and knuckles
+   * -- so this is the "hidden finger" case and must hold.
+   */
   for (let i = 0; i < 200; i++) {
-    solver.solve(rest, invisible, pose, (12 + i) * 33.3, { left: null, right: null });
+    solver.solve(rest, allVisible, pose, (12 + i) * 33.3, { left: null, right: null });
   }
-  const after = angleOf(boneQuat(pose.rotations, "leftIndexProximal"));
-  check("a lost finger stays where it was", Math.abs(after - held) < 0.5,
-    `${held.toFixed(1)} deg became ${after.toFixed(1)} deg`);
+  const stillHeld = angleOf(boneQuat(pose.rotations, "leftIndexProximal"));
+  check("a finger holds while its hand is still tracked",
+    Math.abs(stillHeld - held) < 0.5, `${held.toFixed(1)} deg became ${stillHeld.toFixed(1)} deg`);
 
-  // The arm is the opposite case and must still relax, or this has been
-  // turned into "nothing ever decays".
+  // Now the hand goes too, for far longer than hold plus decay.
+  const invisible = new Float32Array(LANDMARK_COUNT).fill(0);
+  for (let i = 0; i < 300; i++) {
+    solver.solve(rest, invisible, pose, (212 + i) * 33.3, { left: null, right: null });
+  }
+  const relaxed = angleOf(boneQuat(pose.rotations, "leftIndexProximal"));
+  const target = angleOf(RELAXED_POSE[BONE_INDEX["leftIndexProximal"]] as Q4);
+  check("and relaxes once the hand itself is gone", Math.abs(relaxed - target) < 1,
+    `${relaxed.toFixed(1)} deg against a relaxed curl of ${target.toFixed(1)} deg`);
+
+  // The arm is the comparison case and must still relax, or this has become
+  // "nothing ever decays".
   const arm = angleOf(boneQuat(pose.rotations, "leftUpperArm"));
   check("the arm it hangs off still relaxes", arm > 10,
     `${arm.toFixed(1)} deg, expected to have fallen toward the relaxed pose`);

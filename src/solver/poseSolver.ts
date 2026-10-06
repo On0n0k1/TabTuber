@@ -412,6 +412,15 @@ export class PoseSolver {
   private readonly qFinger = quat();
   private readonly qFingerLocal = quat();
   private readonly qParentInv = quat();
+  /**
+   * Whether the hand belonging to the fingers currently being solved is still
+   * being driven.
+   *
+   * A field rather than a seventh parameter on setBone, which knows the bone
+   * but not the side. It cannot go stale: nothing writes a finger bone except
+   * solveFingers, and that sets this first.
+   */
+  private fingersHaveHand = false;
   private readonly palmX = v3();
   private readonly palmY = v3();
   private readonly palmZ = v3();
@@ -552,15 +561,27 @@ export class PoseSolver {
        * Hold, then decay. Without the timeout a permanently occluded limb
        * would freeze forever in whatever position it was last seen.
        *
-       * FINGERS DO NOT DECAY. A limb that leaves frame is usually gone --
-       * someone has lowered an arm -- so relaxing it is the better guess. A
-       * finger is almost never gone: it is momentarily behind another finger
-       * or lost to one bad frame, while the hand it belongs to is still being
-       * tracked right there. Relaxing it changes the shape of a visible hand
-       * for something the performer did not do, where holding is wrong only
-       * until the next frame that sees it.
+       * A FINGER DOES NOT DECAY WHILE ITS HAND IS STILL THERE. A limb that
+       * leaves frame is usually gone -- someone has lowered an arm -- so
+       * relaxing it is the better guess. A finger whose hand is visible is
+       * almost never gone: it is momentarily behind another finger, or lost
+       * to one bad frame. Relaxing it changes the shape of a hand you can
+       * see, for something the performer did not do, where holding is wrong
+       * only until the next frame that sees it.
+       *
+       * Once the HAND has been gated out that argument stops applying, and
+       * the usual one takes over: the hand is below the camera, and fingers
+       * frozen in whatever they last did are no better than a frozen arm.
+       *
+       * The condition is the hand bone's own gate weight -- the mean over the
+       * wrist and the index and pinky knuckles, which is a steadier answer to
+       * "is there a hand here" than any single landmark, and already carries
+       * the blend band that stops it chattering at the edge of visibility.
+       * Above zero rather than fully trusted, so a partly occluded hand keeps
+       * its fingers.
        */
-      const decay = isFingerBone(bone)
+      const holdIndefinitely = isFingerBone(bone) && this.fingersHaveHand;
+      const decay = holdIndefinitely
         ? 0
         : opts.decaySeconds <= 0
           ? 1
@@ -818,6 +839,9 @@ export class PoseSolver {
     dt: number,
   ): void {
     const handBone = `${side}Hand` as HumanBoneName;
+    // Read before any finger is written; setBone only ever writes the weight
+    // of the bone it was given, so the hand's is still this frame's.
+    this.fingersHaveHand = (this.weights[BONE_INDEX[handBone]] ?? 0) > 0;
 
     for (const chain of FINGER_CHAINS) {
       // Reset per finger: each one hangs off the hand, not off the last

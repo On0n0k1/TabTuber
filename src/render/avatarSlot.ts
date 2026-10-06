@@ -54,10 +54,17 @@ export class AvatarSlot {
 
     let next: VrmAvatar;
     try {
-      next = await VrmAvatar.load(source);
+      next = await VrmAvatar.load(
+        typeof source === "string" ? await fetchModel(source) : source,
+      );
     } catch (err) {
       if (generation === this.generation) {
-        this.setStatus({ kind: "error", label, message: String(err) });
+        const message = err instanceof Error ? err.message : String(err);
+        // Logged as well as shown. The banner is one line that times out; a
+        // stack in the console is what anyone diagnosing this actually needs,
+        // and its absence meant a failure could be seen but not investigated.
+        console.error(`avatar: ${label} failed to load`, err);
+        this.setStatus({ kind: "error", label, message });
       }
       return;
     }
@@ -103,6 +110,45 @@ export class AvatarSlot {
     this.current = null;
     this.listeners.clear();
   }
+}
+
+/** The first four bytes of a glTF binary container, as little-endian "glTF". */
+const GLB_MAGIC = 0x46546c67;
+
+/**
+ * Fetches a model and checks it is one before anything tries to parse it.
+ *
+ * Without this a missing file produces `Unexpected token '<'`, because a dev
+ * server answers an unknown path with index.html and the loader hands that
+ * HTML to JSON.parse. The message names the parser's problem rather than
+ * anyone's, and sends you looking at the model instead of at the URL.
+ *
+ * Both checks are worth having separately: a 404 means the path is wrong,
+ * while a 200 that is not a GLB means something answered -- a dev server
+ * fallback, a login page, a CDN error page -- and those are different
+ * mistakes.
+ */
+async function fetchModel(url: string): Promise<ArrayBuffer> {
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch (err) {
+    throw new Error(`could not reach ${url}: ${String(err)}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`${url} returned ${response.status} ${response.statusText}`);
+  }
+
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength < 4 || new DataView(buffer).getUint32(0, true) !== GLB_MAGIC) {
+    const type = response.headers.get("content-type") ?? "unknown type";
+    throw new Error(
+      `${url} is not a VRM: the server returned ${type}, ` +
+      `${buffer.byteLength} bytes, with no glTF header`,
+    );
+  }
+  return buffer;
 }
 
 /**

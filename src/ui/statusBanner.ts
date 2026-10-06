@@ -91,6 +91,19 @@ export class StatusBanner {
     this.spent = "";
     this.arm(kind);
 
+    /*
+     * Every error reaches the console, not only the banner.
+     *
+     * A banner is one line that is dismissed or times out, and an error that
+     * has been seen but not recorded cannot be investigated afterwards. This
+     * is the chokepoint all of them pass through, so putting it here makes it
+     * a guarantee rather than a convention each caller has to remember.
+     *
+     * Callers holding an actual Error still log it themselves, because a
+     * stack says where it came from and this only has the sentence.
+     */
+    if (kind === "error") console.error(`banner: ${message}`);
+
     this.el.dataset["kind"] = kind;
     this.el.replaceChildren(document.createTextNode(message));
 

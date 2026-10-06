@@ -39,10 +39,23 @@ export interface SetupSheetOptions {
 
 const BACKGROUNDS = ["checker", "key", "transparent"] as const;
 
+/** Prefix marking a select option as an uploaded file rather than a URL. */
+const UPLOAD_PREFIX = "upload:";
+
 export class SetupSheet {
   private readonly el: HTMLDivElement;
   private readonly cameraSelect: HTMLSelectElement;
   private readonly modelSelect: HTMLSelectElement;
+  /**
+   * Files brought in this session, by the option value that selects them.
+   *
+   * Files, not their bytes: a File is a handle, so a dozen of them cost
+   * nothing while a dozen VRMs would be well over a hundred megabytes. The
+   * cost is that a file moved or deleted since cannot be read again, which
+   * surfaces as an ordinary load error naming the file.
+   */
+  private readonly uploaded = new Map<string, File>();
+  private uploadedGroup: HTMLOptGroupElement | null = null;
   private open = false;
 
   constructor(parent: HTMLElement, private readonly opts: SetupSheetOptions) {
@@ -67,7 +80,13 @@ export class SetupSheet {
 
     this.modelSelect = this.addSelect("Avatar", opts.models.map((m) => [m.url, m.label]));
     this.modelSelect.addEventListener("change", () => {
-      const chosen = opts.models.find((m) => m.url === this.modelSelect.value);
+      const value = this.modelSelect.value;
+      const file = this.uploaded.get(value);
+      if (file) {
+        void this.read(file);
+        return;
+      }
+      const chosen = opts.models.find((m) => m.url === value);
       if (chosen) opts.onModel(chosen.url, chosen.label);
     });
 
@@ -100,11 +119,7 @@ export class SetupSheet {
     file.addEventListener("change", () => {
       const chosen = file.files?.[0];
       if (!chosen) return;
-      // Named back, so it is clear which file was taken -- the avatar
-      // changing is the real feedback, but not if the model resembles the
-      // one before it.
-      upload.textContent = chosen.name;
-      void chosen.arrayBuffer().then((buf) => opts.onUpload(buf, chosen.name));
+      this.useFile(chosen);
       // Cleared so choosing the same file twice fires again.
       file.value = "";
     });
@@ -193,6 +208,42 @@ export class SetupSheet {
     unknown.textContent = devices.length === 0 ? "no camera found" : "(current camera unknown)";
     this.cameraSelect.prepend(unknown);
     this.cameraSelect.value = "";
+  }
+
+  /**
+   * Takes a file as the avatar, and adds it to the list.
+   *
+   * Called both by the upload button and by a file dropped on the page, so
+   * the two behave identically -- a dropped avatar that could not be
+   * selected again afterwards would be a worse version of the same feature.
+   *
+   * Keyed by name, so re-picking the same file replaces its entry instead of
+   * growing a list of duplicates.
+   */
+  useFile(file: File): void {
+    const value = `${UPLOAD_PREFIX}${file.name}`;
+    this.uploaded.set(value, file);
+
+    this.uploadedGroup ??= (() => {
+      const group = document.createElement("optgroup");
+      group.label = "Uploaded";
+      this.modelSelect.append(group);
+      return group;
+    })();
+
+    if (![...this.uploadedGroup.children].some((o) => (o as HTMLOptionElement).value === value)) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = file.name;
+      this.uploadedGroup.append(option);
+    }
+
+    this.modelSelect.value = value;
+    void this.read(file);
+  }
+
+  private async read(file: File): Promise<void> {
+    this.opts.onUpload(await file.arrayBuffer(), file.name);
   }
 
   /** Reflects a model chosen by other means, so the sheet cannot disagree. */

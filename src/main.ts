@@ -388,7 +388,13 @@ function boot(): void {
   // mirror is in the setup sheet: a performer's choice, not a diagnostic.
 
   applyCompareOffset(view.compareOffset, stickFigure, debugRig);
-  wireAvatar(avatarSlot, stage, banner, debugRig);
+  /*
+   * `setup` is declared below this line. The closure is safe because a drop
+   * cannot happen until the page is interactive, long after boot returns --
+   * but it is a temporal dead zone, so anything that ever calls this handler
+   * during startup would throw rather than misbehave quietly.
+   */
+  wireAvatar(avatarSlot, stage, banner, debugRig, (file) => setup.useFile(file));
   wireSolverControls(panel, solver, view, stickFigure, debugRig);
   wireFilterControls(panel, filter, handFilters);
   wireMotionControls(panel, interpolator, poseBuffer);
@@ -799,6 +805,7 @@ function wireAvatar(
   stage: Stage,
   banner: StatusBanner,
   debugRig: DebugRig,
+  onDropped: (file: File) => void,
 ): void {
   avatarSlot.onStatus((s) => {
     switch (s.kind) {
@@ -825,9 +832,10 @@ function wireAvatar(
     }
   });
 
-  enableVrmDrop(document.body, (buffer, name) => {
-    void avatarSlot.load(buffer, name);
-  });
+  // Routed through the sheet rather than straight to the avatar, so a dropped
+  // file joins the list and can be chosen again -- the same path the upload
+  // button takes, because to a user they are the same action.
+  enableVrmDrop(document.body, onDropped);
 
   void avatarSlot.load(DEFAULT_MODEL.url, DEFAULT_MODEL.label);
 }

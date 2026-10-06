@@ -160,7 +160,13 @@ async function fetchModel(url: string): Promise<ArrayBuffer> {
  */
 export function enableVrmDrop(
   target: HTMLElement,
-  onFile: (buffer: ArrayBuffer, name: string) => void,
+  /*
+   * Handed the File rather than its bytes. A File is a handle, not a copy, so
+   * keeping one costs nothing and the caller can read it again later -- which
+   * is what lets a dropped avatar be re-selected from a list rather than
+   * existing only for as long as it is on screen.
+   */
+  onFile: (file: File) => void,
 ): () => void {
   const prevent = (e: DragEvent): void => {
     e.preventDefault();
@@ -171,7 +177,7 @@ export function enableVrmDrop(
     prevent(e);
     const file = e.dataTransfer?.files?.[0];
     if (!file || !file.name.toLowerCase().endsWith(".vrm")) return;
-    void file.arrayBuffer().then((buffer) => onFile(buffer, file.name));
+    onFile(file);
   };
 
   target.addEventListener("dragover", prevent);

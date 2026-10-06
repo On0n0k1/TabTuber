@@ -28,6 +28,43 @@ jobs:
       # holistic model, so this also proves fetch-assets works from nothing.
       - run: npm run build
 
+  # Bumps package.json's version, generates CHANGELOG.md, and creates a git
+  # tag + GitHub Release from Conventional Commits. Same gate as `deploy`
+  # below: only after `test` passes, and only on a real push to main. The
+  # release commit carries [skip ci], so it does not re-trigger this
+  # workflow or cause a second deploy.
+  #
+  # Deliberately publishes nowhere: @semantic-release/npm runs with
+  # npmPublish:false, so it only rewrites the version field. package-lock.json
+  # is committed alongside package.json because `npm version` bumps both, and
+  # committing only the former leaves the lockfile's version silently stale.
+  release:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # @semantic-release/github's post-release "success" step comments on any
+      # issues or PRs referenced by the released commits -- with only
+      # contents:write it fails 403 after the release itself has already
+      # completed.
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # semantic-release needs the history since the last release tag to
+          # analyse commits; the default shallow clone has only the tip.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Builds the app and syncs dist/ into On0n0k1/On0n0k1.github.io's
   # sites/projects/tabtuber/, served at on0n0k1.github.io/projects/tabtuber/.
   # Gated on `test` and on a real push to main, so a commit that fails

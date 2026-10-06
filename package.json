@@ -10,6 +10,7 @@
     "prebuild": "node scripts/fetch-assets.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "release": "semantic-release",
     "typecheck": "tsc --noEmit",
     "fetch-assets": "node scripts/fetch-assets.mjs",
     "check:math": "node --experimental-strip-types src/solver/math.check.ts",
@@ -30,7 +31,11 @@
     "check:style": "node --experimental-strip-types src/ui/style.check.ts"
   },
   "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@semantic-release/github": "^12.0.10",
     "@types/three": "^0.186.0",
+    "semantic-release": "^25.0.9",
     "typescript": "^7.0.2",
     "vite": "^8.3.1"
   },

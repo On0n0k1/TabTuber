@@ -67,6 +67,22 @@ export interface Tracker {
   readonly captureDelayMs: number;
   /** Set when inference failed fatally; tracking has stopped. */
   readonly lastError: string | null;
+  /**
+   * Cap on inference rate in Hz. 0 runs on every camera frame.
+   *
+   * Tracking and rendering share a thread (SPEC.md 4), so an inference that
+   * costs more than a frame does not merely track slowly -- it starves the
+   * render loop and takes the whole page down with it. On a phone one
+   * detectForVideo measured 270ms, which is the entire budget (SPEC.md 9.4).
+   *
+   * Skipping camera frames hands the slice back. It buys smoothness rather
+   * than accuracy: §6's interpolator slerps toward the newest pose, so a
+   * halved tracking rate costs far less than a halved frame rate does.
+   *
+   * Mutable on a running tracker, unlike the delegate, because nothing about
+   * the graph depends on it.
+   */
+  maxInferenceHz: number;
   init(): Promise<void>;
   attach(video: HTMLVideoElement): void;
   detach(): void;
@@ -108,6 +124,10 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
   /** detectForVideo rejects non-monotonic timestamps, and a paused or looped
    *  video can repeat one, so the last value is tracked and nudged past. */
   private lastTimestamp = -1;
+  /** 0 runs inference on every camera frame; see Tracker.maxInferenceHz. */
+  private inferenceHz = 0;
+  /** Start of the last inference, so the cap is measured start to start. */
+  private lastInferenceAt = 0;
 
   /** Construct the underlying MediaPipe task on the given delegate. */
   protected abstract build(delegate: TrackerDelegate): Promise<L>;
@@ -137,6 +157,36 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
 
   get lastError(): string | null {
     return this.failure;
+  }
+
+  get maxInferenceHz(): number {
+    return this.inferenceHz;
+  }
+
+  set maxInferenceHz(hz: number) {
+    // Clamped rather than trusted: this is reachable from a panel control and
+    // a stored setting, and a negative or NaN cap would disable the throttle
+    // silently instead of failing.
+    this.inferenceHz = Number.isFinite(hz) && hz > 0 ? hz : 0;
+  }
+
+  /**
+   * Whether this camera frame should be inferred on.
+   *
+   * Start to start rather than end to start: the interval is a rate cap, and
+   * measuring from the end of the previous inference would make the realised
+   * rate depend on how long inference took, which is the thing being capped.
+   */
+  private inferenceDue(now: number): boolean {
+    if (this.inferenceHz <= 0) return true;
+    if (
+      this.lastInferenceAt > 0 &&
+      now - this.lastInferenceAt < 1000 / this.inferenceHz
+    ) {
+      return false;
+    }
+    this.lastInferenceAt = now;
+    return true;
   }
 
   /**
@@ -235,9 +285,16 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
         : this.lastCaptureDelayMs + (delay - this.lastCaptureDelayMs) * 0.1;
     }
 
-    // Zero dimensions happen briefly on device switches; inferring on that
-    // throws inside wasm rather than returning an empty result.
-    if (video.videoWidth > 0) {
+    /*
+     * Zero dimensions happen briefly on device switches; inferring on that
+     * throws inside wasm rather than returning an empty result.
+     *
+     * A frame skipped by the throttle falls through to the reschedule below,
+     * so the loop keeps running and the capture-delay smoothing above still
+     * sees every frame -- that figure is a property of the camera, not of
+     * whether this frame was inferred on.
+     */
+    if (video.videoWidth > 0 && this.inferenceDue(now)) {
       const timestamp = now > this.lastTimestamp ? now : this.lastTimestamp + 1;
       this.lastTimestamp = timestamp;
 

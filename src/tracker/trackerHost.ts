@@ -30,8 +30,32 @@ export class TrackerHost {
   private readonly statusListeners = new Set<(s: TrackerStatus) => void>();
   private status: TrackerStatus = { kind: "idle" };
 
+  /**
+   * Inference rate cap, held here rather than on the backend.
+   *
+   * A backend is replaced whenever the delegate or face tracking changes
+   * (see `use`), and a cap that lived only on the instance would silently
+   * revert to unthrottled on every one of those switches -- on the device
+   * where the cap is the reason the page is usable at all (SPEC.md 9.4).
+   */
+  private inferenceHz = 0;
+
   get current(): Tracker | null {
     return this.active;
+  }
+
+  get maxInferenceHz(): number {
+    return this.inferenceHz;
+  }
+
+  set maxInferenceHz(hz: number) {
+    this.inferenceHz = hz;
+    // The backend clamps; reading it back keeps this from drifting from what
+    // is actually in force.
+    if (this.active) {
+      this.active.maxInferenceHz = hz;
+      this.inferenceHz = this.active.maxInferenceHz;
+    }
   }
 
   onFrame(cb: PoseFrameHandler): () => void {
@@ -86,6 +110,8 @@ export class TrackerHost {
     this.active?.dispose();
 
     this.active = next;
+    // Before attach, so the first frame is already throttled.
+    next.maxInferenceHz = this.inferenceHz;
     this.unsubscribe = next.onFrame(this.forward);
     if (this.video) next.attach(this.video);
 

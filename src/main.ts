@@ -443,7 +443,7 @@ function boot(): void {
   // After wireLipSync, so a permission failure has a banner handler to land in.
   if (micEnabled) applyMic(true);
   wireTrackingReadouts(panel, solver);
-  wireTrackerControls(panel, trackerConfig, rebuildTracker);
+  wireTrackerControls(panel, trackerConfig, host, rebuildTracker);
   // Visible so a correction is something you can see happening rather than
   // infer from the avatar looking right.
   panel.addReadoutGroup(
@@ -987,6 +987,23 @@ function wireTrackingReadouts(panel: DebugPanel, solver: PoseSolver): void {
 }
 
 /**
+ * Inference rate caps offered in the panel, as strings so a stored value can
+ * be validated against the set (see readSetting). "0" is every camera frame.
+ */
+const INFERENCE_RATES = ["0", "5", "10", "15", "20", "24", "30"] as const;
+type InferenceRate = (typeof INFERENCE_RATES)[number];
+
+const INFERENCE_RATE_OPTIONS: Record<string, InferenceRate> = {
+  "every frame": "0",
+  "5 Hz": "5",
+  "10 Hz": "10",
+  "15 Hz": "15",
+  "20 Hz": "20",
+  "24 Hz": "24",
+  "30 Hz": "30",
+};
+
+/**
  * The tracker's own cost controls (SPEC.md 9.4).
  *
  * Separate from the Tracking folder, which reports what the solver is doing
@@ -996,6 +1013,7 @@ function wireTrackingReadouts(panel: DebugPanel, solver: PoseSolver): void {
 function wireTrackerControls(
   panel: DebugPanel,
   config: { delegate: DelegatePreference },
+  host: TrackerHost,
   rebuild: () => void,
 ): void {
   const folder = panel.folder("Tracker");
@@ -1007,6 +1025,26 @@ function wireTrackerControls(
       // The delegate is chosen when the graph opens, so this cannot be
       // applied to a running tracker (see HolisticTrackerOptions).
       rebuild();
+    });
+
+  /*
+   * A fixed set rather than a slider. This gets reached for on a phone, where
+   * the panel is the only instrumentation available and dragging a lil-gui
+   * slider to a particular value is a fight -- and the useful question is
+   * which of a few rates is bearable, not what the exact number is.
+   */
+  const rate = {
+    hz: readSetting<InferenceRate>("inferenceHz", INFERENCE_RATES, "0"),
+  };
+  host.maxInferenceHz = Number(rate.hz);
+  folder
+    .add(rate, "hz", INFERENCE_RATE_OPTIONS)
+    .name("max inference")
+    .onChange((value: InferenceRate) => {
+      writeSetting("inferenceHz", value);
+      // Applied to the host, not the tracker: a rebuild would otherwise drop
+      // it (see TrackerHost.maxInferenceHz).
+      host.maxInferenceHz = Number(value);
     });
 }
 

@@ -33,6 +33,7 @@ import {
   VideoTracker,
   visionFileset,
   type DelegatePreference,
+  type FrameSource,
   type TrackerDelegate,
 } from "./tracker.ts";
 
@@ -136,10 +137,10 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
 
   protected override process(
     landmarker: HolisticLandmarker,
-    video: HTMLVideoElement,
+    source: FrameSource,
     timestampMs: number,
   ): PoseFrame | null {
-    const result: HolisticLandmarkerResult = landmarker.detectForVideo(video, timestampMs);
+    const result: HolisticLandmarkerResult = landmarker.detectForVideo(source, timestampMs);
 
     const world = result.poseWorldLandmarks[0];
     const image = result.poseLandmarks[0];

@@ -1,5 +1,6 @@
 /*
- * Tracking backend interface and the shared video-driven loop.
+ * Tracking backend interface, the shared landmarker base, and the
+ * video-driven loop built on it.
  *
  * Two backends exist deliberately (SPEC.md 11). Holistic is the default: it
  * tracks better overall and is the only one supplying real hand landmarks.
@@ -15,6 +16,14 @@
  *
  * Subclasses are the only place MediaPipe types may appear; everything
  * downstream sees PoseFrame.
+ *
+ * The base is split in two because the tracker has to run in a worker, where
+ * there is no <video> and no requestVideoFrameCallback (SPEC.md 4.1).
+ * `LandmarkerTracker` owns everything that is not the loop -- building the
+ * graph, the delegate, the rate cap, inference timing, error state -- and is
+ * driven one frame at a time by whoever has frames. `VideoTracker` adds the
+ * main thread's loop. The backends subclass the latter and are unaware of
+ * which driver is pushing frames at them.
  */
 
 import { FilesetResolver } from "@mediapipe/tasks-vision";
@@ -59,6 +68,30 @@ export const DELEGATE_PREFERENCES: readonly DelegatePreference[] = [
 ];
 
 export type PoseFrameHandler = (frame: PoseFrame) => void;
+
+/**
+ * Anything a backend can run inference on.
+ *
+ * All three are `TexImageSource`, which is what MediaPipe's `detectForVideo`
+ * accepts, so a backend never has to care which one it was handed. The worker
+ * deals in `VideoFrame` (from a transferred MediaStreamTrackProcessor stream)
+ * or `ImageBitmap`; the main thread deals in the <video> element it already
+ * owns.
+ */
+export type FrameSource = HTMLVideoElement | ImageBitmap | VideoFrame;
+
+/**
+ * Width and height of a frame, whatever kind it is.
+ *
+ * Duck-typed rather than `instanceof`, deliberately: `HTMLVideoElement` is
+ * not defined in a worker, so testing against it there throws a
+ * ReferenceError rather than returning false.
+ */
+export function frameSize(source: FrameSource): readonly [number, number] {
+  if ("videoWidth" in source) return [source.videoWidth, source.videoHeight];
+  if ("displayWidth" in source) return [source.displayWidth, source.displayHeight];
+  return [source.width, source.height];
+}
 
 export interface Tracker {
   /** Shown in the panel so the active backend is never ambiguous. */
@@ -127,7 +160,15 @@ export function visionFileset(): Promise<VisionFileset> {
   return filesetPromise;
 }
 
-export abstract class VideoTracker<L extends Closeable> implements Tracker {
+/**
+ * A tracking backend without a loop.
+ *
+ * Holds everything that is the same whether frames arrive from a <video> on
+ * the main thread or from a transferred stream in a worker: the graph, the
+ * delegate it opened on, the rate cap, inference timing and error state.
+ * Callers push frames in through `infer`.
+ */
+export abstract class LandmarkerTracker<L extends Closeable> {
   abstract readonly name: string;
   abstract readonly tracksHands: boolean;
   abstract readonly tracksFace: boolean;
@@ -137,13 +178,10 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
   ) {}
 
   protected landmarker: L | null = null;
-  private video: HTMLVideoElement | null = null;
-  private handle: number | null = null;
   private readonly handlers = new Set<PoseFrameHandler>();
 
   private delegateInUse: TrackerDelegate = "GPU";
   private lastInferenceMs = 0;
-  private lastCaptureDelayMs = 0;
   private failure: string | null = null;
   /** detectForVideo rejects non-monotonic timestamps, and a paused or looped
    *  video can repeat one, so the last value is tracked and nudged past. */
@@ -159,7 +197,7 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
   /** Run inference and convert the result. Return null to emit nothing. */
   protected abstract process(
     landmarker: L,
-    video: HTMLVideoElement,
+    source: FrameSource,
     timestampMs: number,
   ): PoseFrame | null;
 
@@ -173,10 +211,6 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
 
   get inferenceMs(): number {
     return this.lastInferenceMs;
-  }
-
-  get captureDelayMs(): number {
-    return this.lastCaptureDelayMs;
   }
 
   get lastError(): string | null {
@@ -266,8 +300,94 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
     return () => this.handlers.delete(cb);
   }
 
+  /**
+   * Run one frame through the graph and emit whatever comes out.
+   *
+   * The driver decides WHEN a frame arrives; this decides whether to spend an
+   * inference on it. Returns false when the frame was skipped or inference
+   * has stopped, which lets a driver releasing frames know it still owns this
+   * one.
+   *
+   * `now` is separate from `timestampMs` because the rate cap is measured
+   * against the clock while the graph is fed a monotonic frame stamp, and on
+   * the worker's transport those are not the same number.
+   */
+  infer(source: FrameSource, timestampMs: number, now: number): boolean {
+    const landmarker = this.landmarker;
+    if (!landmarker || this.failure) return false;
+
+    /*
+     * Zero dimensions happen briefly on device switches; inferring on that
+     * throws inside wasm rather than returning an empty result.
+     */
+    const [width] = frameSize(source);
+    if (width <= 0) return false;
+    if (!this.inferenceDue(now)) return false;
+
+    // detectForVideo rejects a non-monotonic timestamp, and both drivers can
+    // repeat one -- a paused video on the main thread, a clock that is not
+    // performance.now() in the worker.
+    const timestamp = timestampMs > this.lastTimestamp ? timestampMs : this.lastTimestamp + 1;
+    this.lastTimestamp = timestamp;
+
+    const started = performance.now();
+    let frame: PoseFrame | null = null;
+    try {
+      frame = this.process(landmarker, source, timestamp);
+    } catch (err) {
+      /*
+       * A throw here used to kill tracking outright: the callback below
+       * never ran, the loop stopped, and the only symptom was a live camera
+       * feed driving nothing. Inference failures are reported and the driver
+       * is told to stop rather than left to die silently.
+       *
+       * Stopping rather than continuing because these failures are
+       * structural -- a graph that cannot open will not open on the next
+       * frame either, and retrying would flood the console sixty times a
+       * second with the same message.
+       */
+      this.failure = String(err);
+      console.error(`${this.name}: inference failed, tracking stopped`, err);
+      this.onInferenceFailed();
+      return false;
+    }
+    this.lastInferenceMs = performance.now() - started;
+
+    if (frame) for (const cb of this.handlers) cb(frame);
+    return frame !== null;
+  }
+
+  /** Hook for a driver that has a loop to tear down. */
+  protected onInferenceFailed(): void {}
+
+  dispose(): void {
+    this.landmarker?.close();
+    this.landmarker = null;
+    this.handlers.clear();
+  }
+}
+
+/**
+ * A landmarker driven by a <video> on the main thread.
+ *
+ * This is the original loop, and it stays for two reasons: it is what runs
+ * when the worker cannot be used at all (SPEC.md 4.1's last "done when"), and
+ * it is the only driver that can see `VideoFrameCallbackMetadata`.
+ */
+export abstract class VideoTracker<L extends Closeable>
+  extends LandmarkerTracker<L>
+  implements Tracker
+{
+  private video: HTMLVideoElement | null = null;
+  private handle: number | null = null;
+  private lastCaptureDelayMs = 0;
+
+  get captureDelayMs(): number {
+    return this.lastCaptureDelayMs;
+  }
+
   attach(video: HTMLVideoElement): void {
-    if (!this.landmarker) throw new Error(`${this.name}: init() must run before attach()`);
+    if (!this.ready) throw new Error(`${this.name}: init() must run before attach()`);
     if (!("requestVideoFrameCallback" in video)) {
       throw new Error("requestVideoFrameCallback is unavailable in this browser");
     }
@@ -284,13 +404,17 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
     this.handle = null;
   }
 
+  /** A fatal inference failure stops the loop; see LandmarkerTracker.infer. */
+  protected override onInferenceFailed(): void {
+    this.detach();
+  }
+
   private readonly step = (
     now: DOMHighResTimeStamp,
     metadata?: VideoFrameCallbackMetadata,
   ): void => {
     const video = this.video;
-    const landmarker = this.landmarker;
-    if (!video || !landmarker) return;
+    if (!video) return;
 
     /*
      * `captureTime` shares performance.now()'s timebase and is populated for
@@ -310,51 +434,19 @@ export abstract class VideoTracker<L extends Closeable> implements Tracker {
     }
 
     /*
-     * Zero dimensions happen briefly on device switches; inferring on that
-     * throws inside wasm rather than returning an empty result.
-     *
-     * A frame skipped by the throttle falls through to the reschedule below,
-     * so the loop keeps running and the capture-delay smoothing above still
-     * sees every frame -- that figure is a property of the camera, not of
-     * whether this frame was inferred on.
+     * A frame skipped by the throttle still reschedules, so the loop keeps
+     * running and the capture-delay smoothing above still sees every frame --
+     * that figure is a property of the camera, not of whether this frame was
+     * inferred on.
      */
-    if (video.videoWidth > 0 && this.inferenceDue(now)) {
-      const timestamp = now > this.lastTimestamp ? now : this.lastTimestamp + 1;
-      this.lastTimestamp = timestamp;
+    this.infer(video, now, now);
 
-      const started = performance.now();
-      let frame: PoseFrame | null = null;
-      try {
-        frame = this.process(landmarker, video, timestamp);
-      } catch (err) {
-        /*
-         * A throw here used to kill tracking outright: the callback below
-         * never ran, the loop stopped, and the only symptom was a live camera
-         * feed driving nothing. Inference failures are reported and the loop
-         * is detached deliberately rather than left to die silently.
-         *
-         * Detaching rather than continuing because these failures are
-         * structural -- a graph that cannot open will not open on the next
-         * frame either, and retrying would flood the console sixty times a
-         * second with the same message.
-         */
-        this.failure = String(err);
-        console.error(`${this.name}: inference failed, tracking stopped`, err);
-        this.detach();
-        return;
-      }
-      this.lastInferenceMs = performance.now() - started;
-
-      if (frame) for (const cb of this.handlers) cb(frame);
-    }
-
-    this.handle = video.requestVideoFrameCallback(this.step);
+    // Cleared by onInferenceFailed when inference died; do not restart it.
+    if (this.video) this.handle = video.requestVideoFrameCallback(this.step);
   };
 
-  dispose(): void {
+  override dispose(): void {
     this.detach();
-    this.landmarker?.close();
-    this.landmarker = null;
-    this.handlers.clear();
+    super.dispose();
   }
 }

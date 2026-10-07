@@ -1,3 +1,12 @@
+# [1.2.0](https://github.com/On0n0k1/TabTuber/compare/v1.1.0...v1.2.0) (2026-10-07)
+
+
+### Features
+
+* **tracker:** restore the pose backend for slow devices ([5e7c3e1](https://github.com/On0n0k1/TabTuber/commit/5e7c3e16f53d946b996587ca10d910eb12421435))
+* **ui:** add the tracking-mode control and gate face and fingers on it ([5a52c1c](https://github.com/On0n0k1/TabTuber/commit/5a52c1c19c939c4359ba4119f90a0054191dd56d))
+* **ui:** let a toolbar toggle be disabled with a reason ([fc057bd](https://github.com/On0n0k1/TabTuber/commit/fc057bd0309b16f3571aed7629c30b2c3204b151))
+
 # [1.1.0](https://github.com/On0n0k1/TabTuber/compare/v1.0.0...v1.1.0) (2026-10-06)
 
 

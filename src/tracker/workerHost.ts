@@ -75,6 +75,17 @@ export class WorkerTrackingHost implements TrackingHost {
   private settleReady: (() => void) | null = null;
   /** Set when the worker said it cannot run; the caller falls back. */
   private fatal: string | null = null;
+  /**
+   * Worker `performance.now()` minus this thread's, in ms.
+   *
+   * A worker's `performance.timeOrigin` is its own creation time, so the two
+   * clocks are offset by however long the page had been open when it
+   * started. Frames are stamped on the worker's clock and read downstream
+   * against this thread's -- SPEC.md 9.2 subtracts the stamp from
+   * `performance.now()` -- so the offset is applied once here rather than
+   * left to skew every latency reading and the pose buffer's lookahead.
+   */
+  private clockSkew = 0;
 
   constructor(worker: Worker) {
     this.worker = worker;
@@ -105,12 +116,17 @@ export class WorkerTrackingHost implements TrackingHost {
     const message = e.data;
     switch (message.kind) {
       case "ready":
+        this.clockSkew = message.timeOrigin - performance.timeOrigin;
         this.settleReady?.();
         this.settleReady = null;
         break;
       case "frame": {
         this.state = { ...this.state, inferenceMs: message.frame.inferenceMs };
-        const frame = this.assembler.assemble(message.frame);
+        const frame = this.assembler.assemble({
+          ...message.frame,
+          // Onto this thread's clock; see clockSkew.
+          timestampMs: message.frame.timestampMs + this.clockSkew,
+        });
         for (const cb of this.handlers) cb(frame);
         break;
       }

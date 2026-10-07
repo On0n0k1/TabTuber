@@ -93,8 +93,14 @@ export type MainToWorker =
   | { readonly kind: "dispose" };
 
 export type WorkerToMain =
-  /** Sent once the worker has its urls and is able to build. */
-  | { readonly kind: "ready" }
+  /**
+   * Sent once the worker has its urls and is able to build.
+   *
+   * Carries `performance.timeOrigin` because a worker's differs from the
+   * main thread's, so frame stamps need correcting by the difference before
+   * anything subtracts them from a main-thread `performance.now()`.
+   */
+  | { readonly kind: "ready"; readonly timeOrigin: number }
   | { readonly kind: "frame"; readonly frame: FramePayload }
   | { readonly kind: "status"; readonly status: StatusPayload }
   | { readonly kind: "snapshot"; readonly snapshot: TrackerSnapshot }

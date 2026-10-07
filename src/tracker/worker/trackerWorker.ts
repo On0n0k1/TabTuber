@@ -152,14 +152,33 @@ async function pump(stream: ReadableStream<VideoFrame>): Promise<void> {
 
     try {
       /*
-       * `VideoFrame.timestamp` is microseconds on a media clock, not
-       * performance.now()'s timebase, so the two are kept apart: the graph
-       * is fed the frame's own monotonic stamp and the rate cap is measured
-       * against the wall clock. Conflating them is what makes
-       * `captureDelayMs` unrecoverable, which is why that figure now comes
-       * from the main thread instead (SPEC.md 9.2).
+       * Stamped with this thread's clock, NOT `VideoFrame.timestamp`.
+       *
+       * The frame's own timestamp is microseconds on a media clock, and
+       * `PoseFrame.timestampMs` is read downstream as a `performance.now()`
+       * reading: SPEC.md 9.2 computes latency as `now - stamp`, and the pose
+       * buffer times its lookahead off the same field. Passing the media
+       * clock through made that subtraction wildly negative, which the
+       * latency readout correctly rendered as "no data".
+       *
+       * Same value for both arguments, exactly as the main thread's loop
+       * does: monotonic, which is all MediaPipe requires of a graph
+       * timestamp, and a real clock reading, which is what the rate cap and
+       * everything downstream need.
        */
-      host.current?.infer(frame, frame.timestamp / 1000, performance.now());
+      const now = performance.now();
+      /*
+       * A snapshot when nothing was emitted, so `inferenceMs` keeps updating
+       * with no one in shot.
+       *
+       * The figure used to come from a live getter on this thread and ticked
+       * on every inference whether or not a pose was found. Riding it on the
+       * frame message alone would blank the readout exactly when someone is
+       * checking whether the tracker is working at all -- which is when they
+       * are most likely to be out of frame. Either way this is one message
+       * per camera frame, never two.
+       */
+      if (!host.current?.infer(frame, now, now)) pushSnapshot();
     } finally {
       // Always, including when the rate cap declined this frame: a VideoFrame
       // holds a hardware buffer, and leaking them stalls the camera.
@@ -199,7 +218,14 @@ ctx.onmessage = (e: MessageEvent<MainToWorker>): void => {
         return FilesetResolver.forVisionTasks(assetUrls().wasm, USE_MODULE);
       });
       initialised = true;
-      send({ kind: "ready" });
+      /*
+       * A worker's `performance.timeOrigin` is its own creation time, so its
+       * `performance.now()` is NOT comparable with the main thread's. The
+       * origin goes back with `ready` so the difference can be corrected
+       * once, at the boundary, rather than every frame stamp being quietly
+       * off by however long the page had been open.
+       */
+      send({ kind: "ready", timeOrigin: performance.timeOrigin });
       break;
     }
 
@@ -223,7 +249,13 @@ ctx.onmessage = (e: MessageEvent<MainToWorker>): void => {
       // The transport for browsers without MediaStreamTrackProcessor. The
       // bitmap is owned here now, so it is closed either way.
       try {
-        host.current?.infer(message.bitmap, message.now, message.now);
+        /*
+         * This thread's clock, not the `now` the main thread sent, so every
+         * frame is stamped on one timebase regardless of transport and a
+         * single skew correction covers both (see the `ready` message).
+         */
+        const now = performance.now();
+        if (!host.current?.infer(message.bitmap, now, now)) pushSnapshot();
       } finally {
         message.bitmap.close();
       }

@@ -1,3 +1,17 @@
+# [1.5.0](https://github.com/On0n0k1/TabTuber/compare/v1.4.0...v1.5.0) (2026-10-07)
+
+
+### Bug Fixes
+
+* **ui:** cap the camera preview against the viewport ([1067afd](https://github.com/On0n0k1/TabTuber/commit/1067afdcb64be5ff4ca4863b3a6e7ea38db5b291))
+* **ui:** keep the expression tray open after a choice ([b071e08](https://github.com/On0n0k1/TabTuber/commit/b071e08455924b3fbdb23042c6fe7e70f7c55730))
+
+
+### Features
+
+* **ui:** fold the expressions into one button on a narrow bar ([1290b5d](https://github.com/On0n0k1/TabTuber/commit/1290b5d0d97e4cf2ae8b18d5e18ff7f3a3018009))
+* **ui:** move the preview and latency to the top-left corner ([65774ec](https://github.com/On0n0k1/TabTuber/commit/65774ec18469f17672d6d3885f597e0a0641c7aa))
+
 # [1.4.0](https://github.com/On0n0k1/TabTuber/compare/v1.3.0...v1.4.0) (2026-10-07)
 
 

@@ -146,8 +146,25 @@ body {
   text-decoration: none;
 }
 
-.side-app:hover {
+.side-app:hover,
+.side-link:hover {
   text-decoration: underline;
+}
+
+/*
+ * Sits with the app link rather than in the nav above: both leave the
+ * documentation, which is the thing the rule above them separates.
+ */
+.side-link {
+  display: block;
+  margin-top: 0.4rem;
+  color: var(--fg-dim);
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.side-link:hover {
+  color: var(--accent);
 }
 
 /* ---- Content ---------------------------------------------------------- */
@@ -376,7 +393,8 @@ img {
   }
 
   .side-brand,
-  .side-app {
+  .side-app,
+  .side-link {
     margin: 0;
     padding: 0;
     border: 0;
@@ -386,8 +404,15 @@ img {
     margin-bottom: 0.75rem;
   }
 
-  .side-app {
+  /* Side by side on one row, where the column had them stacked. */
+  .side-app,
+  .side-link {
+    display: inline-block;
     margin-top: 0.85rem;
+  }
+
+  .side-link {
+    margin-left: 1rem;
   }
 
   main {

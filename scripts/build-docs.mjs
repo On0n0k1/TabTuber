@@ -38,6 +38,14 @@ const REPO = "https://github.com/On0n0k1/TabTuber";
 const REPO_BLOB = `${REPO}/blob/main`;
 
 /**
+ * The author's site, which is also what this one is deployed under -- the app
+ * lives at <portfolio>/projects/tabtuber/. Absolute rather than a relative hop
+ * up out of the subpath, so it still resolves if the app is served from
+ * somewhere else, which a relative "../../" would not.
+ */
+const PORTFOLIO = "https://on0n0k1.github.io";
+
+/**
  * The page order, which is also the reading order the index recommends.
  *
  * Declared rather than derived from a directory listing: the order is editorial
@@ -213,6 +221,7 @@ function shell({ title, navHtml, body }) {
 ${navHtml}
 </nav>
 <a class="side-app" href="../index.html">Open the app →</a>
+<a class="side-link" href="${PORTFOLIO}" target="_blank" rel="noopener">Portfolio →</a>
 </div></aside>
 <div class="content">
 <main>
@@ -220,6 +229,7 @@ ${body}</main>
 <footer class="foot">
 TabTuber user documentation.
 <a href="${REPO}">Source and developer docs on GitHub</a>.
+Built by <a href="${PORTFOLIO}">Lucas Lemos</a>.
 </footer>
 </div>
 </div>

@@ -1,0 +1,343 @@
+/*
+ * Stylesheet for the generated documentation pages (scripts/build-docs.mjs).
+ *
+ * Deliberately not src/style.css. That stylesheet exists to keep a canvas
+ * transparent and to position HUD elements around a lil-gui panel; none of it
+ * applies to a page of prose, and sharing it would couple the documentation's
+ * appearance to the app's compositing rules.
+ *
+ * Both colour schemes are supported rather than forcing dark. Documentation is
+ * read in daylight on other people's machines, and the app's own dark palette
+ * is a consequence of compositing over game footage, which a text page does
+ * not do.
+ */
+
+:root {
+  --bg: #16161a;
+  --bg-soft: #1d1d23;
+  --bg-code: #101014;
+  --fg: #d6d6dd;
+  --fg-dim: #9a9aa6;
+  --fg-bright: #f2f2f5;
+  --accent: #7bb0ff;
+  --accent-dim: #5a87c7;
+  --rule: #2e2e38;
+  --warn: #ffcb6b;
+
+  --measure: 44rem;
+  --radius: 6px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #fdfdfc;
+    --bg-soft: #f3f3f1;
+    --bg-code: #f6f6f4;
+    --fg: #2c2c31;
+    --fg-dim: #63636d;
+    --fg-bright: #101014;
+    --accent: #1f5fb0;
+    --accent-dim: #3d77c2;
+    --rule: #dededa;
+    --warn: #8a6100;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Anchor links land under the sticky header without this. */
+  scroll-padding-top: 5rem;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ---- Navigation ------------------------------------------------------- */
+
+.nav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--rule);
+  /* Scrolled prose must not show through the sticky bar. */
+  backdrop-filter: blur(6px);
+}
+
+.nav-inner {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0.6rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  align-items: baseline;
+}
+
+.nav-brand {
+  font-weight: 650;
+  color: var(--fg-bright);
+  text-decoration: none;
+  margin-right: auto;
+}
+
+.nav a {
+  color: var(--fg-dim);
+  text-decoration: none;
+  font-size: 0.875rem;
+}
+
+.nav a:hover {
+  color: var(--accent);
+}
+
+.nav a[aria-current="page"] {
+  color: var(--fg-bright);
+  font-weight: 600;
+}
+
+.nav-app {
+  color: var(--accent) !important;
+}
+
+/* ---- Content ---------------------------------------------------------- */
+
+main {
+  max-width: var(--measure);
+  /* The side padding is the phone gutter; it must survive the centring. */
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 5rem;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--fg-bright);
+  line-height: 1.25;
+  margin: 2.25rem 0 0.75rem;
+  /* A heading immediately followed by its section should not be orphaned. */
+  break-after: avoid;
+}
+
+h1 {
+  font-size: 2rem;
+  margin-top: 0;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: 1.4rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+h3 {
+  font-size: 1.1rem;
+}
+
+h4 {
+  font-size: 1rem;
+  color: var(--fg);
+}
+
+p,
+ul,
+ol {
+  margin: 0 0 1rem;
+}
+
+ul,
+ol {
+  padding-left: 1.4rem;
+}
+
+li {
+  margin-bottom: 0.35rem;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+a:hover {
+  color: var(--fg-bright);
+}
+
+strong {
+  color: var(--fg-bright);
+  font-weight: 650;
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2.5rem 0;
+}
+
+blockquote {
+  margin: 1rem 0;
+  padding: 0.1rem 0 0.1rem 1rem;
+  border-left: 3px solid var(--warn);
+  color: var(--fg-dim);
+}
+
+/* ---- Code ------------------------------------------------------------- */
+
+code,
+kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+}
+
+:not(pre) > code {
+  background: var(--bg-code);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  /* A long path in prose must not force the page to scroll sideways. */
+  overflow-wrap: break-word;
+}
+
+pre {
+  background: var(--bg-code);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  margin: 0 0 1.25rem;
+}
+
+pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+}
+
+/* ---- Tables ----------------------------------------------------------- */
+
+/*
+ * The documentation leans on tables heavily -- most pages compare two options
+ * or map a symptom to a fix -- so these get more attention than the rest.
+ */
+.table-wrap {
+  overflow-x: auto;
+  margin: 0 0 1.25rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9375rem;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+thead th {
+  background: var(--bg-soft);
+  color: var(--fg-bright);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/*
+ * Several tables use an empty first header cell as a row label column. Without
+ * this the label column collapses and the row reads as a sentence fragment.
+ */
+tbody th {
+  background: var(--bg-soft);
+  font-weight: 600;
+}
+
+/* ---- Images ----------------------------------------------------------- */
+
+/*
+ * Screenshots are added to docs/ as ordinary files and referenced from the
+ * markdown; build-docs.mjs copies them across. They are bordered because a
+ * screenshot of a dark app on a dark page has no edge of its own.
+ */
+img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  display: block;
+  margin: 1.25rem 0;
+}
+
+/* ---- Footer ----------------------------------------------------------- */
+
+.foot {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 3rem;
+  border-top: 1px solid var(--rule);
+  color: var(--fg-dim);
+  font-size: 0.875rem;
+}
+
+.foot a {
+  color: var(--accent-dim);
+}
+
+/*
+ * Declared before the narrow-screen override below: equal specificity means
+ * source order decides, so a base rule written after the media query would
+ * silently win and the page list would never collapse.
+ */
+.nav-pages {
+  display: contents;
+}
+
+/* ---- Narrow screens --------------------------------------------------- */
+
+@media (max-width: 34rem) {
+  body {
+    font-size: 15px;
+  }
+
+  main {
+    padding: 1.75rem 1rem 3.5rem;
+  }
+
+  h1 {
+    font-size: 1.6rem;
+  }
+
+  h2 {
+    font-size: 1.25rem;
+  }
+
+  .nav-inner {
+    padding: 0.5rem 1rem;
+  }
+
+  /* The full page list does not fit; the brand and the app link do. */
+  .nav-pages {
+    display: none;
+  }
+}

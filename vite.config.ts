@@ -9,6 +9,17 @@ export default defineConfig({
    * for the dev server, which keeps `npm run dev` at localhost:5173/.
    */
   base: "./",
+  /*
+   * No SPA fallback. The app is one page with no client-side routing, so the
+   * fallback never actually serves it -- all it does is answer an unknown path
+   * with index.html and a 200, which is how `/docs` silently served the app
+   * instead of the documentation, and the same shape as the missing-model bug
+   * that handed index.html to a model fetch (SPEC.md 16).
+   *
+   * With this, `npm run preview` resolves dist/docs/ the way GitHub Pages does,
+   * so the deployed layout can be checked before it is deployed.
+   */
+  appType: "mpa",
   server: {
     // getUserMedia needs a secure context; localhost qualifies.
     // LAN testing from a phone requires https, see SPEC.md section 3.

@@ -28,6 +28,10 @@ pkg/
 *.log
 npm-debug.log*
 
+# Documentation pages, rendered from docs/ by scripts/build-docs.mjs. The
+# markdown in docs/ is the source; this is the generated HTML.
+public/docs/
+
 # MediaPipe runtime assets, staged by scripts/fetch-assets.mjs
 public/mediapipe/
 # Staged at build time by scripts/fetch-assets.mjs, except the two avatars

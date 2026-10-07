@@ -49,6 +49,7 @@ broken offline and hostage to an upstream path change.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check` | the assertion suite, 279 assertions |
 | `npm run fetch-assets` | stage the wasm and models |
+| `npm run build:docs` | render `docs/` to `public/docs/` |
 | `npm run inspect-vrm <path>` | VRM version, bone coverage, spring bones, MToon |
 | `npm run shrink-vrm <in> [out]` | strip the metadata thumbnail |
 
@@ -295,6 +296,74 @@ The site is served from `/projects/tabtuber/` rather than a domain root.
 is document-relative and the build carries no knowledge of the prefix. Vite
 normalises this to `/` for the dev server, so `npm run dev` stays at
 `localhost:5173/`.
+
+---
+
+## Documentation
+
+**The markdown in [docs/](docs/) is the source of truth.** It is what gets
+reviewed and what reads correctly on the repository page, so nothing may require
+it to be written in a way that reads worse there.
+
+[`scripts/build-docs.mjs`](scripts/build-docs.mjs) renders it to static HTML:
+
+```sh
+npm run build:docs        # -> public/docs/
+```
+
+It runs automatically before `dev` and `build`, alongside `fetch-assets`.
+Output goes to `public/docs/` rather than straight to `dist/`, because Vite both
+copies `publicDir` into the build *and* serves it on the dev server — so one
+staging step makes the pages reachable from both. `public/docs/` is gitignored,
+like everything else that gets staged.
+
+Served at **`/docs/`**, and linked from the app at the foot of the setup sheet.
+Not from the toolbar: the toolbar is for things reached for mid-performance, and
+reading a guide is not one of them.
+
+**`README.md` is deliberately not published.** It is the developer entry point
+and belongs on the repository page; `docs/` is the user documentation and is what
+a visitor to the site should find. A link out of `docs/` into the source tree is
+rewritten to a GitHub URL, since the published site carries no source.
+
+### It fails rather than shipping a broken link
+
+The build errors out, listing every problem at once, on:
+
+- a link to a page that is not published
+- an `#anchor` with no matching heading, in any page
+- a referenced image that is not in `docs/`
+- a `../` link to a path that is not in the repository
+
+Headings are slugged with **GitHub's algorithm**, so the same `#anchor` works in
+the rendered pages and in the markdown read on the repository page. Only one of
+those two is ours to define, so the other one sets the rule.
+
+### Adding screenshots
+
+Put the image file in `docs/` and reference it normally:
+
+```markdown
+![The toolbar, with the microphone active](toolbar-mic.png)
+```
+
+Images beside the markdown are copied into the output as they are. A reference
+to a file that is not there fails the build, so a typo cannot ship as a broken
+image.
+
+### A note on the SPA fallback
+
+[`vite.config.ts`](vite.config.ts) sets `appType: "mpa"`, which turns off Vite's
+SPA fallback. The app is one page with no client-side routing, so the fallback
+never served it — all it did was answer an unknown path with `index.html` and a
+**200**, which is how `/docs` silently returned the app instead of the
+documentation. It is the same shape as the missing-model bug that handed
+`index.html` to a model fetch.
+
+One wrinkle: `npm run preview` 404s on `/docs` without a trailing slash, because
+it does not redirect a bare directory to its index. GitHub Pages does — verified
+with a 301 — so the deployed site is fine either way. The in-app link names
+`docs/index.html` explicitly so it works in dev, preview and production alike.
 
 ---
 

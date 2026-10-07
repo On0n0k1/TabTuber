@@ -426,6 +426,44 @@ body[data-bg="key"] {
 }
 
 /*
+ * Portfolio link, bottom LEFT, above the toolbar.
+ *
+ * The toolbar is centred and never reaches the corners, so this does not have
+ * to share its row -- but it still clears the bar's own height (38px button +
+ * 6px padding on each side = 50px, plus the bar's 14px from the bottom edge)
+ * with a 12px gap on top, so a future control added to the bar's left end
+ * cannot land underneath it.
+ */
+.portfolio-link {
+  position: fixed;
+  left: 12px;
+  bottom: 76px;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 8px;
+  border: 1px solid #3a3a44;
+  border-radius: 8px;
+  background: rgb(20 20 26 / 0.84);
+  backdrop-filter: blur(8px);
+  color: #a8a8b4;
+  font-size: 11px;
+  text-decoration: none;
+  transition: color 120ms, background-color 120ms, border-color 120ms;
+}
+
+.portfolio-link svg {
+  width: 16px;
+  height: 16px;
+}
+
+.portfolio-link:hover {
+  color: #ffffff;
+  background: rgb(255 255 255 / 0.1);
+}
+
+/*
  * Latency and camera frame rate, directly under the preview (SPEC.md 9.2).
  *
  * Under the preview rather than anywhere else because the two are read

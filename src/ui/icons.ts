@@ -237,6 +237,15 @@ export const ICONS = {
     <circle cx="12" cy="12" r="9.2" />
     <path d="M9 10.2v1M15 10.2v1" />
     <path d="M8.4 15.1h7.2" />`,
+
+  /* --- portfolio link ---------------------------------------------------- */
+
+  // A briefcase: the handle is the one stroke that separates it from a
+  // plain box, so it survives being 22px without a label beside it.
+  portfolio: `
+    <rect x="3" y="7.4" width="18" height="12.2" rx="1.8" />
+    <path d="M8.6 7.4V5.6a1.8 1.8 0 0 1 1.8-1.8h3.2a1.8 1.8 0 0 1 1.8 1.8v1.8" />
+    <path d="M3 12.6h18" />`,
 } as const;
 
 export type IconName = keyof typeof ICONS;

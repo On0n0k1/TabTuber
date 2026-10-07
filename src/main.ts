@@ -76,6 +76,7 @@ import { StatusBanner } from "./ui/statusBanner.ts";
 import type { IconName } from "./ui/icons.ts";
 import { SetupSheet } from "./ui/setupSheet.ts";
 import { Toolbar } from "./ui/toolbar.ts";
+import { createPortfolioLink } from "./ui/portfolioLink.ts";
 
 /**
  * Avatars offered in the setup sheet.
@@ -833,6 +834,8 @@ async function boot(): Promise<void> {
       set: (value: string | null) => expressions.set(value as ExpressionName | null),
     },
   ]);
+
+  createPortfolioLink(ui);
 
   camera.onStateChange((s) => {
     switch (s.kind) {

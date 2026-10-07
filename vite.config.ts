@@ -1,6 +1,61 @@
-import { defineConfig } from "vite";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { defineConfig, type Plugin } from "vite";
+
+/** Where the rendered documentation is served from, under the site root. */
+const DOCS = "/docs";
+
+/**
+ * Resolves `/docs` and `/docs/` to the documentation's index page.
+ *
+ * GitHub Pages does this for any directory holding an index.html -- a bare path
+ * 301s to its slashed form, which then serves the index. Neither Vite server
+ * does: the dev server serves publicDir files without resolving a directory
+ * index, and `vite preview` does not redirect a bare directory either. So
+ * typing localhost:5173/docs got nothing while the deployed site was fine,
+ * which is the worst way round for a link nobody can test locally.
+ *
+ * The redirect is the part that matters, and the reason this is not simply a
+ * rewrite of both forms: served at `/docs`, the page loads but every relative
+ * URL in it resolves one level too high -- `docs.css` becomes `/docs.css` and
+ * `getting-started.html` becomes `/getting-started.html`. The slash has to be
+ * real by the time the browser resolves the document's links.
+ */
+function docsDirectoryIndex(): Plugin {
+  const handle = (
+    req: IncomingMessage,
+    res: ServerResponse,
+    next: () => void,
+  ): void => {
+    const [path, query] = (req.url ?? "/").split("?");
+    const suffix = query === undefined ? "" : `?${query}`;
+
+    if (path === DOCS) {
+      res.statusCode = 301;
+      res.setHeader("Location", `${DOCS}/${suffix}`);
+      res.end();
+      return;
+    }
+
+    if (path === `${DOCS}/`) req.url = `${DOCS}/index.html${suffix}`;
+
+    next();
+  };
+
+  return {
+    name: "docs-directory-index",
+    // Both servers, because both get used to look at the docs: `dev` while
+    // writing them and `preview` to check the built layout before deploying.
+    configureServer(server) {
+      server.middlewares.use(handle);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handle);
+    },
+  };
+}
 
 export default defineConfig({
+  plugins: [docsDirectoryIndex()],
   /*
    * The site is deployed under /projects/tabtuber/ rather than at a domain
    * root (SPEC.md section 3). A relative base makes every emitted asset URL

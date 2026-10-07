@@ -351,19 +351,38 @@ Images beside the markdown are copied into the output as they are. A reference
 to a file that is not there fails the build, so a typo cannot ship as a broken
 image.
 
-### A note on the SPA fallback
+### How `/docs` resolves
 
-[`vite.config.ts`](vite.config.ts) sets `appType: "mpa"`, which turns off Vite's
-SPA fallback. The app is one page with no client-side routing, so the fallback
-never served it — all it did was answer an unknown path with `index.html` and a
-**200**, which is how `/docs` silently returned the app instead of the
-documentation. It is the same shape as the missing-model bug that handed
-`index.html` to a model fetch.
+Two pieces of [`vite.config.ts`](vite.config.ts) make the path behave the same
+everywhere.
 
-One wrinkle: `npm run preview` 404s on `/docs` without a trailing slash, because
-it does not redirect a bare directory to its index. GitHub Pages does — verified
-with a 301 — so the deployed site is fine either way. The in-app link names
-`docs/index.html` explicitly so it works in dev, preview and production alike.
+**`appType: "mpa"`** turns off Vite's SPA fallback. The app is one page with no
+client-side routing, so the fallback never served it — all it did was answer an
+unknown path with `index.html` and a **200**, which is how `/docs` silently
+returned the app instead of the documentation. Same shape as the missing-model
+bug that handed `index.html` to a model fetch.
+
+**The `docs-directory-index` plugin** resolves `/docs` and `/docs/` to the index
+page on both the dev and preview servers. GitHub Pages does this for any
+directory holding an `index.html` — a bare path 301s to its slashed form, which
+then serves the index — but neither Vite server does it unaided, so
+`localhost:5173/docs` got nothing while the deployed site was fine. That is the
+worst way round: a link nobody can check locally.
+
+The **redirect** is the part that matters, rather than just rewriting both forms
+to the index. Served at `/docs`, the page loads but every relative URL in it
+resolves one level too high — `docs.css` becomes `/docs.css` and
+`getting-started.html` becomes `/getting-started.html`. The slash has to be real
+before the browser resolves the document's links.
+
+| | dev | preview | Pages |
+|---|---|---|---|
+| `/docs` | 301 → `/docs/` | 301 → `/docs/` | 301 → `/docs/` |
+| `/docs/` | index | index | index |
+
+The in-app link still names `docs/index.html` outright, because it depends on
+none of this and is the one path to the documentation that has to work wherever
+the app is opened from.
 
 ---
 

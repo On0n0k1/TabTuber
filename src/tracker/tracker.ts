@@ -28,14 +28,7 @@
 
 import { FilesetResolver } from "@mediapipe/tasks-vision";
 import type { PoseFrame } from "../types.ts";
-
-/*
- * Staged into `public/mediapipe/wasm` by scripts/fetch-assets.mjs, so the
- * path is relative to the deployed document rather than the server root --
- * the site is served from a subpath (SPEC.md section 3), where a leading
- * slash would resolve outside it.
- */
-export const WASM_PATH = `${import.meta.env.BASE_URL}mediapipe/wasm`;
+import { assetUrls } from "./assets.ts";
 
 export type TrackerDelegate = "GPU" | "CPU";
 
@@ -128,6 +121,18 @@ export interface Tracker {
    */
   maxInferenceHz: number;
   init(): Promise<void>;
+  /**
+   * Push one frame through the graph.
+   *
+   * Part of the interface because there are two drivers now: the main
+   * thread's `requestVideoFrameCallback` loop, and the worker pulling from a
+   * transferred stream (SPEC.md 4.1). Returns false when the frame was
+   * declined -- by the rate cap, by zero dimensions, or because inference has
+   * stopped -- which tells a caller holding a VideoFrame that it still owns
+   * it.
+   */
+  infer(source: FrameSource, timestampMs: number, now: number): boolean;
+  /** Main-thread driver only; the worker has no <video> to attach. */
   attach(video: HTMLVideoElement): void;
   detach(): void;
   onFrame(cb: PoseFrameHandler): () => void;
@@ -143,9 +148,33 @@ type VisionFileset = Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
 
 let filesetPromise: Promise<VisionFileset> | null = null;
 
+export type FilesetProvider = () => Promise<VisionFileset>;
+
+let provider: FilesetProvider | null = null;
+
+/**
+ * Override how the fileset is obtained.
+ *
+ * The worker needs a different one: the ES-module flavour of the wasm glue,
+ * and `ModuleFactory` re-armed immediately before each task is built
+ * (worker/wasmGlue.ts explains both). Installing it here rather than
+ * branching inside the backends keeps them unaware of which thread they are
+ * on, which is the point of the split in `LandmarkerTracker`.
+ */
+export function setFilesetProvider(next: FilesetProvider | null): void {
+  provider = next;
+  filesetPromise = null;
+}
+
 /** Shared across backends: resolving it twice would fetch the wasm twice. */
 export function visionFileset(): Promise<VisionFileset> {
-  filesetPromise ??= FilesetResolver.forVisionTasks(WASM_PATH);
+  /*
+   * A provider is called per build rather than cached, because the worker's
+   * has a side effect that has to happen before every `createFromOptions`
+   * and not once per page.
+   */
+  if (provider) return provider();
+  filesetPromise ??= FilesetResolver.forVisionTasks(assetUrls().wasm);
   return filesetPromise;
 }
 

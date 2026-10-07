@@ -29,6 +29,7 @@ import {
   type HandFrame,
   type PoseFrame,
 } from "../types.ts";
+import { assetUrls } from "./assets.ts";
 import {
   VideoTracker,
   visionFileset,
@@ -36,8 +37,6 @@ import {
   type FrameSource,
   type TrackerDelegate,
 } from "./tracker.ts";
-
-const MODEL_PATH = `${import.meta.env.BASE_URL}models/holistic_landmarker.task`;
 
 export interface HolisticTrackerOptions {
   readonly minPoseDetectionConfidence?: number;
@@ -122,7 +121,8 @@ export class HolisticTracker extends VideoTracker<HolisticLandmarker> {
     const fileset = await visionFileset();
 
     return HolisticLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_PATH, delegate },
+      // From the seam rather than a const; see assets.ts.
+      baseOptions: { modelAssetPath: assetUrls().holisticModel, delegate },
       runningMode: "VIDEO",
       minPoseDetectionConfidence: this.options.minPoseDetectionConfidence ?? 0.6,
       minPosePresenceConfidence: this.options.minPosePresenceConfidence ?? 0.6,

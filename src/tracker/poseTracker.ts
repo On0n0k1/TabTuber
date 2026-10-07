@@ -16,6 +16,7 @@
 
 import { PoseLandmarker, type PoseLandmarkerResult } from "@mediapipe/tasks-vision";
 import { LANDMARK_COUNT, type PoseFrame } from "../types.ts";
+import { assetUrls } from "./assets.ts";
 import {
   VideoTracker,
   visionFileset,
@@ -23,12 +24,6 @@ import {
   type FrameSource,
   type TrackerDelegate,
 } from "./tracker.ts";
-
-/*
- * Through the vite base, like every other runtime asset (4a6adb1): the site
- * is served from a subpath, where a leading slash resolves outside it.
- */
-const MODEL_PATH = `${import.meta.env.BASE_URL}models/pose_landmarker_full.task`;
 
 export interface PoseTrackerOptions {
   /** Which delegate to build on; `auto` is GPU with a CPU fallback. Honoured
@@ -63,7 +58,9 @@ export class PoseTracker extends VideoTracker<PoseLandmarker> {
   protected override async build(delegate: TrackerDelegate): Promise<PoseLandmarker> {
     const fileset = await visionFileset();
     return PoseLandmarker.createFromOptions(fileset, {
-      baseOptions: { modelAssetPath: MODEL_PATH, delegate },
+      // From the seam rather than a const: in a worker the url has to be
+      // absolute and is supplied by the main thread (see assets.ts).
+      baseOptions: { modelAssetPath: assetUrls().poseModel, delegate },
       runningMode: "VIDEO",
       numPoses: 1,
       minPoseDetectionConfidence: this.options.minPoseDetectionConfidence ?? 0.6,

@@ -30,6 +30,19 @@ export default defineConfig({
       ],
     },
   },
+  /*
+   * The tracker worker is created with `{ type: "module" }`, so the emitted
+   * bundle has to be an ES module for the two to agree. Vite's default here
+   * is `iife`, which happens to parse as a module and therefore works by
+   * accident -- an accident that ends the moment the worker bundle contains
+   * a static import rollup cannot inline (SPEC.md 4.1).
+   *
+   * The pairing is forced in the other direction too: Vite's dev server
+   * always serves a worker as a module, so a classic worker -- which is what
+   * MediaPipe's classic wasm glue needs -- cannot be developed against.
+   * Hence the module glue, selected by `useModule` in worker/wasmGlue.ts.
+   */
+  worker: { format: "es" },
   build: {
     target: "es2022",
     // MediaPipe wasm and .task assets are large and must not be inlined.

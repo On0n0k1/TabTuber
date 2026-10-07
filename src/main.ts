@@ -57,6 +57,7 @@ import {
   type Tracker,
   type TrackerBackend,
 } from "./tracker/tracker.ts";
+import { CaptureDelay } from "./capture/captureDelay.ts";
 import { TrackerHost } from "./tracker/trackerHost.ts";
 import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
@@ -139,6 +140,11 @@ function boot(): void {
 
   const stage = new Stage(canvas);
   const camera = new Camera();
+  /*
+   * Sampled from the preview's frame callback rather than from the tracker,
+   * so the figure survives the tracker moving off this thread (SPEC.md 4.1).
+   */
+  const captureDelay = new CaptureDelay();
   /*
    * Everyone starts on pose, once, including people who already have
    * `holistic` stored from before it was a choice (SPEC.md 11).
@@ -259,10 +265,9 @@ function boot(): void {
     const stamp = interpolator.current.timestampMs;
     if (stamp <= 0) return { ms: 0, partial: false };
 
-    const captureDelay = host.current?.captureDelayMs ?? 0;
     return {
-      ms: performance.now() - stamp + captureDelay,
-      partial: captureDelay === 0,
+      ms: performance.now() - stamp + captureDelay.ms,
+      partial: !captureDelay.available,
     };
   };
 
@@ -718,6 +723,8 @@ function boot(): void {
         // into the first frames of the new stream.
         filter.reset();
         poseBuffer.reset();
+        // A new stream can be a different camera, whose delay is its own.
+        captureDelay.reset();
         ui.append(camera.element);
         camera.element.style.display = "";
         measurePreview(camera.element, (w, h) => {
@@ -768,7 +775,7 @@ function boot(): void {
   // Started once, not per camera-ready: the video element is stable across
   // restarts, so starting a chain per state change would leave the old one
   // running and double the reported rate.
-  countCameraFrames(camera.element, cameraFps);
+  countCameraFrames(camera.element, cameraFps, captureDelay);
 
   // A fatal inference failure stops tracking; without this the only symptom
   // is a live camera driving a motionless avatar.
@@ -1333,11 +1340,25 @@ function measurePreview(
  * Counts real camera frames rather than render frames. Render rate says
  * nothing about whether the camera is delivering at the rate it claims.
  */
-function countCameraFrames(video: HTMLVideoElement, meter: FpsMeter): void {
+function countCameraFrames(
+  video: HTMLVideoElement,
+  meter: FpsMeter,
+  captureDelay: CaptureDelay,
+): void {
   if (!("requestVideoFrameCallback" in video)) return;
 
-  const step = (): void => {
+  /*
+   * The capture delay rides along on this loop rather than running one of
+   * its own. It is the same callback and the same metadata, and once the
+   * tracker is in a worker this is the only place either is still visible
+   * (SPEC.md 4.1).
+   */
+  const step = (
+    now: DOMHighResTimeStamp,
+    metadata?: VideoFrameCallbackMetadata,
+  ): void => {
     meter.tick();
+    captureDelay.sample(now, metadata);
     video.requestVideoFrameCallback(step);
   };
   video.requestVideoFrameCallback(step);

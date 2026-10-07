@@ -109,17 +109,6 @@ export interface Tracker {
   readonly delegate: TrackerDelegate;
   /** Inference time only -- not end-to-end pipeline latency. */
   readonly inferenceMs: number;
-  /**
-   * Camera sensor to frame callback, in ms, or 0 when the browser will not
-   * say.
-   *
-   * The part of the chain nothing downstream can see. A PoseFrame is stamped
-   * when the callback runs, so measuring from that stamp misses everything
-   * the camera and the browser did before handing the frame over -- which on
-   * a USB webcam is tens of milliseconds and the single largest term
-   * (SPEC.md 9.2).
-   */
-  readonly captureDelayMs: number;
   /** Set when inference failed fatally; tracking has stopped. */
   readonly lastError: string | null;
   /**
@@ -380,11 +369,6 @@ export abstract class VideoTracker<L extends Closeable>
 {
   private video: HTMLVideoElement | null = null;
   private handle: number | null = null;
-  private lastCaptureDelayMs = 0;
-
-  get captureDelayMs(): number {
-    return this.lastCaptureDelayMs;
-  }
 
   attach(video: HTMLVideoElement): void {
     if (!this.ready) throw new Error(`${this.name}: init() must run before attach()`);
@@ -409,36 +393,12 @@ export abstract class VideoTracker<L extends Closeable>
     this.detach();
   }
 
-  private readonly step = (
-    now: DOMHighResTimeStamp,
-    metadata?: VideoFrameCallbackMetadata,
-  ): void => {
+  private readonly step = (now: DOMHighResTimeStamp): void => {
     const video = this.video;
     if (!video) return;
 
-    /*
-     * `captureTime` shares performance.now()'s timebase and is populated for
-     * camera sources, which is what this always is. Smoothed because it is a
-     * property of the device rather than of the frame, and a per-frame value
-     * jitters by more than it varies.
-     *
-     * Absent on browsers that do not supply it, in which case the latency
-     * readout says so rather than quietly reporting a smaller number.
-     */
-    const captureTime = metadata?.captureTime;
-    if (captureTime !== undefined) {
-      const delay = Math.max(0, now - captureTime);
-      this.lastCaptureDelayMs = this.lastCaptureDelayMs === 0
-        ? delay
-        : this.lastCaptureDelayMs + (delay - this.lastCaptureDelayMs) * 0.1;
-    }
-
-    /*
-     * A frame skipped by the throttle still reschedules, so the loop keeps
-     * running and the capture-delay smoothing above still sees every frame --
-     * that figure is a property of the camera, not of whether this frame was
-     * inferred on.
-     */
+    // A frame skipped by the rate cap still reschedules, so the loop keeps
+    // running rather than stopping at the first throttled frame.
     this.infer(video, now, now);
 
     // Cleared by onInferenceFailed when inference died; do not restart it.

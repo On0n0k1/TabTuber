@@ -1,3 +1,17 @@
+# [1.4.0](https://github.com/On0n0k1/TabTuber/compare/v1.3.0...v1.4.0) (2026-10-07)
+
+
+### Bug Fixes
+
+* **tracker:** stamp worker frames on a comparable clock ([e092c04](https://github.com/On0n0k1/TabTuber/commit/e092c04e8d2317298c520a1c5e063838a8c702ca))
+
+
+### Features
+
+* **tracker:** add the tracker worker and its protocol ([998de4e](https://github.com/On0n0k1/TabTuber/commit/998de4e2a0e0e0510eff9ad7f5bf0cd51ab5854e))
+* **tracker:** derive capture delay from the preview frame callback ([82f14fc](https://github.com/On0n0k1/TabTuber/commit/82f14fc8b8d7d0435280038d10f7ed1ba919141d))
+* **tracker:** run the tracker off the main thread ([15e59e2](https://github.com/On0n0k1/TabTuber/commit/15e59e25a785cc8f3d8b19e4eaa7b1f19eebd061))
+
 # [1.3.0](https://github.com/On0n0k1/TabTuber/compare/v1.2.1...v1.3.0) (2026-10-07)
 
 

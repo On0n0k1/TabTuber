@@ -35,6 +35,14 @@ export interface SetupSheetOptions {
   readonly onBackground: (mode: string) => void;
   readonly onMirror: (on: boolean) => void;
   readonly mirror: () => boolean;
+  /**
+   * Where the user documentation is served, resolved through the Vite base.
+   *
+   * Passed in rather than read here: `import.meta.env` is only defined by a
+   * bundler, and a module that reads it cannot be imported by a check script
+   * (see ui/style.check.ts for what that costs).
+   */
+  readonly docsUrl: string;
 }
 
 const BACKGROUNDS = ["checker", "key", "transparent"] as const;
@@ -139,6 +147,23 @@ export class SetupSheet {
     hint.className = "sheet-hint";
     hint.textContent = "A .vrm can also be dropped anywhere on the page.";
     this.el.append(hint);
+
+    /*
+     * The way out to the documentation, here rather than on the toolbar: the
+     * toolbar is for things reached for mid-performance (SPEC.md 9.1), and
+     * reading a guide is not one of them. This sheet is already where someone
+     * setting up for the first time is looking.
+     *
+     * A new tab, because the page holds a live camera and a tracker -- naviga-
+     * ting away tears both down and costs a permission prompt to get back.
+     */
+    const docs = document.createElement("a");
+    docs.className = "sheet-docs";
+    docs.href = opts.docsUrl;
+    docs.target = "_blank";
+    docs.rel = "noopener";
+    docs.textContent = "How to use this \u2192";
+    this.el.append(docs);
 
     parent.append(this.el);
   }

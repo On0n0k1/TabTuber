@@ -645,6 +645,29 @@ body[data-bg="key"] {
 }
 
 /*
+ * The way out to the documentation, at the foot of the sheet.
+ *
+ * `display: block` so the rule above it spans the sheet and the vertical
+ * margins apply at all -- both are ignored on an inline anchor. It needs no
+ * `[hidden]` guard, unlike the elements ui/style.check.ts covers: this one is
+ * never hidden by attribute, and the sheet that contains it carries its own.
+ */
+.sheet-docs {
+  display: block;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #2e2e38;
+  color: #8ab4f8;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.sheet-docs:hover {
+  color: #c7dbff;
+  text-decoration: underline;
+}
+
+/*
  * Preview hidden, WITHOUT display:none (SPEC.md 11.1).
  *
  * The tracking loop is driven by requestVideoFrameCallback on this very

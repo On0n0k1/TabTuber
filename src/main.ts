@@ -660,6 +660,17 @@ async function boot(): Promise<void> {
       view.mirror = on;
     },
     mirror: () => view.mirror,
+    /*
+     * Through the base, like every other runtime asset: the site is served
+     * from a subpath, so an absolute "/docs/" would leave it (see vite.config).
+     *
+     * Named down to index.html rather than left as a directory. Pages redirects
+     * a bare directory to its index, but the dev server serves publicDir files
+     * without resolving a directory index, so "docs/" is a 404 there -- and a
+     * documentation link that only works in production is one nobody developing
+     * the app ever sees working.
+     */
+    docsUrl: `${import.meta.env.BASE_URL}docs/index.html`,
   });
 
   /*

@@ -409,10 +409,33 @@ async function boot(): Promise<void> {
   // the choice is applied is mpToThree (SPEC.md 5.1).
   const view = { mirror: true, compareOffset: 0.55 };
 
-  // Preview dimensions, measured after layout rather than read per frame --
-  // a getBoundingClientRect inside the draw loop would thrash layout.
+  // Preview dimensions, observed rather than read per frame -- a
+  // getBoundingClientRect inside the draw loop would thrash layout. The box
+  // is sized against the viewport, so these change on a rotation or a window
+  // resize and not only when a camera comes up.
   let previewW = 0;
   let previewH = 0;
+
+  /*
+   * One observer for the life of the page, rather than a measurement taken
+   * when a camera comes up. The box used to be a constant 240px, so reading
+   * it once was enough; now that it is capped against the viewport, a
+   * rotation or a window resize changes it, and a stale figure would leave
+   * the landmark overlay drawn at the wrong scale over the picture it is
+   * describing.
+   *
+   * The border box, matching what the overlay's own fixed position covers.
+   * Zero-sized entries are ignored: the element reports one before a stream
+   * is attached, and the draw path already treats a zero width as "not
+   * measured yet".
+   */
+  new ResizeObserver(() => {
+    const rect = camera.element.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    previewW = rect.width;
+    previewH = rect.height;
+    overlay.resize(rect.width, rect.height);
+  }).observe(camera.element);
 
   const renderFps = new FpsMeter();
   const cameraFps = new FpsMeter();
@@ -773,11 +796,15 @@ async function boot(): Promise<void> {
         captureDelay.reset();
         ui.append(camera.element);
         camera.element.style.display = "";
-        measurePreview(camera.element, (w, h) => {
-          previewW = w;
-          previewH = h;
-          overlay.resize(w, h);
-        });
+        /*
+         * The stylesheet caps the preview against the viewport and needs the
+         * camera's aspect ratio to express the height cap as a width. A new
+         * stream can be a different camera with a different shape, so this is
+         * set per ready rather than once.
+         */
+        if (s.height > 0) {
+          camera.element.style.setProperty("--preview-ar", String(s.width / s.height));
+        }
         host.setVideo(s.video);
         break;
       case "error":
@@ -1374,18 +1401,6 @@ function wireMotionControls(
   // Each frame of lookahead costs one frame interval of latency, and the
   // Stats readout shows what that currently is. 0 is the old behaviour.
   folder.add(poseBuffer, "lookahead", 0, MAX_LOOKAHEAD, 1).name("lookahead (frames)");
-}
-
-/** Waits a frame so the preview has been laid out before it is measured. */
-function measurePreview(
-  video: HTMLVideoElement,
-  apply: (w: number, h: number) => void,
-): void {
-  requestAnimationFrame(() => {
-    const rect = video.getBoundingClientRect();
-    if (rect.width > 0) apply(rect.width, rect.height);
-    else measurePreview(video, apply);
-  });
 }
 
 /**

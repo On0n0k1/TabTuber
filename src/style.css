@@ -141,12 +141,26 @@ body[data-bg="key"] {
  *
  * Mirrored for display only -- the pixels handed to the tracker are never
  * flipped (see src/capture/camera.ts).
+ *
+ * Capped against the viewport as well as in pixels, because 240px is a
+ * corner affordance on a desktop and most of a phone screen. The ceilings
+ * are 30% of the width and 25% of the height (SPEC.md 9.1).
+ *
+ * The height ceiling is written as a width, via the camera's own aspect
+ * ratio, so one `min()` resolves both and the box keeps that ratio. A plain
+ * `max-height` would not do it: a video letterboxes inside its box, so the
+ * element would stay full width while the picture shrank inside it -- and the
+ * overlay maps normalised landmarks onto the element box, so the skeleton
+ * would drift off the image it describes. Main sets --preview-ar from the
+ * track's real dimensions; the default here only has to survive first paint.
  */
 #ui video {
   position: fixed;
   left: 12px;
   bottom: 12px;
-  width: 240px;
+  --preview-ar: 1.3333;
+  width: min(240px, 30vw, calc(25vh * var(--preview-ar)));
+  height: auto;
   border-radius: 4px;
   border: 1px solid #3a3a44;
   transform: scaleX(-1);

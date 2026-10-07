@@ -47,18 +47,17 @@ import {
 import { BONE_INDEX, type HumanBoneName,
   type FaceFrame,
 } from "./types.ts";
-import { HolisticTracker } from "./tracker/holisticTracker.ts";
-import { PoseTracker } from "./tracker/poseTracker.ts";
 import { LEG_LANDMARKS, LM } from "./tracker/landmarks.ts";
 import {
   DELEGATE_PREFERENCES,
   TRACKER_BACKENDS,
   type DelegatePreference,
-  type Tracker,
   type TrackerBackend,
 } from "./tracker/tracker.ts";
 import { CaptureDelay } from "./capture/captureDelay.ts";
-import { TrackerHost } from "./tracker/trackerHost.ts";
+import { LocalTrackingHost } from "./tracker/localHost.ts";
+import type { TrackingHost } from "./tracker/trackingHost.ts";
+import { hasStreamTransport, WorkerTrackingHost } from "./tracker/workerHost.ts";
 import { createAvatarPose, HAND_LANDMARK_COUNT, LANDMARK_COUNT } from "./types.ts";
 import { DebugPanel } from "./ui/debugPanel.ts";
 import { Overlay2D } from "./ui/overlay2d.ts";
@@ -130,7 +129,56 @@ const DEFAULT_POSTURE: PostureMode = "sitting";
  */
 const SITTING_HIP_CUTOFF_SCALE = 0.4;
 
-function boot(): void {
+/**
+ * Decide where the tracker runs, once, at startup.
+ *
+ * Three tiers, in order of how much of SPEC.md 9.5's stall they move off the
+ * render thread:
+ *
+ * 1. Worker with a transferred `MediaStreamTrackProcessor` stream. Camera
+ *    frames never touch this thread.
+ * 2. Worker fed `ImageBitmap`s from here. Leaves a GPU-side frame grab
+ *    behind but still moves the inference and its readback.
+ * 3. Everything on this thread, as it shipped before. Required rather than
+ *    tolerated: a browser that cannot start a worker has to keep tracking
+ *    rather than fail (SPEC.md 4.1).
+ *
+ * The worker's own failure modes are reported, not guessed at -- it answers
+ * `ready` once it has its asset urls, or `fatal` if it cannot run -- because
+ * "a worker exists" and "MediaPipe opened a GL context inside it" are
+ * different questions and only the second one matters.
+ */
+async function chooseHost(): Promise<TrackingHost> {
+  if (typeof Worker === "undefined" || typeof OffscreenCanvas === "undefined") {
+    console.info("tracker: no worker or no OffscreenCanvas, running on the main thread");
+    return new LocalTrackingHost();
+  }
+
+  try {
+    const worker = new Worker(
+      new URL("./tracker/worker/trackerWorker.ts", import.meta.url),
+      { type: "module" },
+    );
+    const host = new WorkerTrackingHost(worker);
+    const { ok, reason } = await host.start();
+    if (ok) {
+      console.info(
+        hasStreamTransport()
+          ? "tracker: in a worker, frames by transferred stream"
+          : "tracker: in a worker, frames by ImageBitmap",
+      );
+      return host;
+    }
+    console.warn(`tracker: worker unusable (${reason ?? "unknown"}), falling back`, reason);
+    host.dispose();
+  } catch (err) {
+    console.warn("tracker: worker could not be started, falling back", err);
+  }
+
+  return new LocalTrackingHost();
+}
+
+async function boot(): Promise<void> {
   const canvas = document.querySelector<HTMLCanvasElement>("#stage");
   const ui = document.querySelector<HTMLElement>("#ui");
   if (!canvas || !ui) throw new Error("missing #stage canvas or #ui container");
@@ -180,22 +228,20 @@ function boot(): void {
       "auto",
     ),
   };
-  const newTracker = (): Tracker =>
-    trackerConfig.backend === "pose"
-      ? new PoseTracker({ delegate: trackerConfig.delegate })
-      : new HolisticTracker({
-          faceBlendshapes: trackerConfig.faceBlendshapes,
-          delegate: trackerConfig.delegate,
-        });
-
-  const host = new TrackerHost();
+  /*
+   * Where the tracker runs is decided once, here, and reported rather than
+   * assumed (SPEC.md 4.1). The worker is the point of the exercise; the
+   * main-thread host is what runs when it cannot be started at all, which
+   * 4.1 requires rather than merely tolerates.
+   */
+  const host: TrackingHost = await chooseHost();
   /*
    * Rebuilding is how a backend or face-blendshape change takes effect: both
    * are fixed when the graph is built, so neither can be flipped on a tracker
    * that is already running (see HolisticTrackerOptions).
    */
   const rebuildTracker = (): void => {
-    void host.use(trackerConfig.backend, newTracker);
+    void host.use({ ...trackerConfig });
   };
 
   /*
@@ -381,11 +427,11 @@ function boot(): void {
       // a last value, so a stalled camera or tracker is visible in the panel.
       cameraFps: cameraFps.staleAfter(1000),
       trackerFps: trackerFps.staleAfter(1000),
-      inferenceMs: host.current?.inferenceMs ?? 0,
+      inferenceMs: host.snapshot.inferenceMs,
       latencyMs: latency().ms,
       lookaheadMs: poseBuffer.latencyMs,
-      backend: host.current?.name ?? "-",
-      delegate: host.current?.ready ? host.current.delegate : "-",
+      backend: host.snapshot.backend,
+      delegate: host.snapshot.delegate,
       confidence: interpolator.current.confidence,
       mic: micState,
     }),
@@ -652,7 +698,7 @@ function boot(): void {
        * would be a lie for the length of a model download.
        */
       disabled: () =>
-        host.current && !host.current.tracksFace
+        host.snapshot.ready && !host.snapshot.tracksFace
           ? "Body-only tracking has no face model to read blink or gaze from."
           : null,
     },
@@ -669,7 +715,7 @@ function boot(): void {
         solver.options.fingers = on;
       },
       disabled: () =>
-        host.current && !host.current.tracksHands
+        host.snapshot.ready && !host.snapshot.tracksHands
           ? "Body-only tracking supplies no hand landmarks to articulate."
           : null,
     },
@@ -781,7 +827,7 @@ function boot(): void {
   // is a live camera driving a motionless avatar.
   let reportedError: string | null = null;
   stage.onFrame(({ dt }) => {
-    const trackerError = host.current?.lastError ?? null;
+    const trackerError = host.snapshot.lastError;
     if (trackerError && trackerError !== reportedError) {
       reportedError = trackerError;
       banner.show("error", `Tracking stopped: ${trackerError}`);
@@ -860,7 +906,7 @@ function boot(): void {
   });
   stage.start();
 
-  void startPipeline(camera, host, banner, newTracker);
+  void startPipeline(camera, host, banner, trackerConfig.backend);
 }
 
 /**
@@ -869,9 +915,9 @@ function boot(): void {
  */
 async function startPipeline(
   camera: Camera,
-  host: TrackerHost,
+  host: TrackingHost,
   banner: StatusBanner,
-  newTracker: () => Tracker,
+  backend: TrackerBackend,
 ): Promise<void> {
   host.onStatus((s) => {
     switch (s.kind) {
@@ -889,7 +935,13 @@ async function startPipeline(
     }
   });
 
-  await host.use("holistic", newTracker);
+  /*
+   * The stored backend, not a hardcoded one. This said "holistic" while the
+   * default moved to pose (8a7a4b8), so the first load built a tracker
+   * nobody asked for and the control then rebuilt it -- two model downloads
+   * on the device least able to afford either (SPEC.md 9.5, 11).
+   */
+  await host.use({ backend, faceBlendshapes: false, delegate: readSetting<DelegatePreference>("delegate", DELEGATE_PREFERENCES, "auto") });
   await camera.start();
 }
 
@@ -1115,7 +1167,7 @@ const INFERENCE_RATE_OPTIONS: Record<string, InferenceRate> = {
 function wireTrackerControls(
   panel: DebugPanel,
   config: { delegate: DelegatePreference },
-  host: TrackerHost,
+  host: TrackingHost,
   rebuild: () => void,
 ): void {
   const folder = panel.folder("Tracker");
@@ -1364,4 +1416,4 @@ function countCameraFrames(
   video.requestVideoFrameCallback(step);
 }
 
-boot();
+void boot();

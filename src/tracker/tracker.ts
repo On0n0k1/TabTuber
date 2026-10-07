@@ -26,7 +26,7 @@
  * which driver is pushing frames at them.
  */
 
-import { FilesetResolver } from "@mediapipe/tasks-vision";
+import type { FilesetResolver } from "@mediapipe/tasks-vision";
 import type { PoseFrame } from "../types.ts";
 import { assetUrls } from "./assets.ts";
 
@@ -174,7 +174,20 @@ export function visionFileset(): Promise<VisionFileset> {
    * and not once per page.
    */
   if (provider) return provider();
-  filesetPromise ??= FilesetResolver.forVisionTasks(assetUrls().wasm);
+  /*
+   * Imported here rather than at the top of the file, and the import is
+   * type-only above.
+   *
+   * `main.ts` needs this module for the backend and delegate constants, so a
+   * static value import would pull all of MediaPipe into the main bundle --
+   * where, once the tracker is in a worker, nothing uses it. It would then
+   * ship twice, since a worker is a separate build graph that cannot share a
+   * chunk with this one, and the first load would pay for both on the device
+   * least able to afford it (SPEC.md 9.5).
+   */
+  filesetPromise ??= import("@mediapipe/tasks-vision").then((m) =>
+    m.FilesetResolver.forVisionTasks(assetUrls().wasm),
+  );
   return filesetPromise;
 }
 

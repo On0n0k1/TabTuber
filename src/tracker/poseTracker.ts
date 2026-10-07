@@ -23,7 +23,11 @@ import {
   type TrackerDelegate,
 } from "./tracker.ts";
 
-const MODEL_PATH = "/models/pose_landmarker_full.task";
+/*
+ * Through the vite base, like every other runtime asset (4a6adb1): the site
+ * is served from a subpath, where a leading slash resolves outside it.
+ */
+const MODEL_PATH = `${import.meta.env.BASE_URL}models/pose_landmarker_full.task`;
 
 export interface PoseTrackerOptions {
   /** Which delegate to build on; `auto` is GPU with a CPU fallback. Honoured

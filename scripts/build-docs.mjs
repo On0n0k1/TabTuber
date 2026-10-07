@@ -47,11 +47,11 @@ const REPO_BLOB = `${REPO}/blob/main`;
 const PAGES = [
   { file: "README.md", out: "index.html", nav: "Start here" },
   { file: "getting-started.md", nav: "Getting started" },
-  { file: "choosing-an-avatar.md", nav: "Avatars" },
+  { file: "choosing-an-avatar.md", nav: "Choosing an avatar" },
   { file: "performing.md", nav: "Performing" },
   { file: "lip-sync.md", nav: "Lip sync" },
-  { file: "tracking-quality.md", nav: "Tracking" },
-  { file: "streaming-with-obs.md", nav: "OBS" },
+  { file: "tracking-quality.md", nav: "Tracking quality" },
+  { file: "streaming-with-obs.md", nav: "Streaming with OBS" },
   { file: "troubleshooting.md", nav: "Troubleshooting" },
 ];
 
@@ -206,17 +206,23 @@ function shell({ title, navHtml, body }) {
 <link rel="stylesheet" href="docs.css">
 </head>
 <body>
-<nav class="nav"><div class="nav-inner">
-<a class="nav-brand" href="index.html">TabTuber docs</a>
-<span class="nav-pages">${navHtml}</span>
-<a class="nav-app" href="../index.html">Open the app →</a>
-</div></nav>
+<div class="layout">
+<aside class="side"><div class="side-inner">
+<a class="side-brand" href="index.html">TabTuber docs</a>
+<nav class="side-nav" aria-label="Documentation pages">
+${navHtml}
+</nav>
+<a class="side-app" href="../index.html">Open the app →</a>
+</div></aside>
+<div class="content">
 <main>
 ${body}</main>
 <footer class="foot">
 TabTuber user documentation.
 <a href="${REPO}">Source and developer docs on GitHub</a>.
 </footer>
+</div>
+</div>
 </body>
 </html>
 `;

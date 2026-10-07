@@ -50,8 +50,9 @@
 }
 
 html {
-  /* Anchor links land under the sticky header without this. */
-  scroll-padding-top: 5rem;
+  /* A little breathing room above an anchored heading, not clearance for a
+     sticky bar -- nothing overlaps the prose in this layout. */
+  scroll-padding-top: 1rem;
 }
 
 body {
@@ -62,61 +63,102 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* ---- Navigation ------------------------------------------------------- */
+/* ---- Layout ----------------------------------------------------------- */
 
-.nav {
+/*
+ * Page list in a column beside the prose, not a bar above it. A docs set of
+ * eight pages wants all eight visible at once with the current one marked --
+ * a horizontal bar either wraps to two rows or truncates, and neither shows
+ * where you are in the set.
+ */
+.layout {
+  display: grid;
+  /* minmax(0,…) on the prose column, or a wide <pre> inside it refuses to
+     shrink and pushes the whole grid wider than the viewport. */
+  grid-template-columns: 15rem minmax(0, 1fr);
+  max-width: 64rem;
+  margin: 0 auto;
+}
+
+/*
+ * The column stretches to the full grid row so its rule runs the height of the
+ * page; the sticky part is the content inside it. Making the column itself
+ * sticky instead leaves the divider stopping wherever the nav happens to end,
+ * which on a long page is a short line floating beside the prose.
+ */
+.side {
+  border-right: 1px solid var(--rule);
+}
+
+.side-inner {
   position: sticky;
   top: 0;
-  z-index: 10;
-  background: var(--bg-soft);
-  border-bottom: 1px solid var(--rule);
-  /* Scrolled prose must not show through the sticky bar. */
-  backdrop-filter: blur(6px);
+  /* Scrolls on its own only once the nav is taller than the viewport, which
+     it is not today and would be with a few more pages. */
+  max-height: 100vh;
+  overflow-y: auto;
+  padding: 1.75rem 1.25rem 2rem;
 }
 
-.nav-inner {
-  max-width: var(--measure);
-  margin: 0 auto;
-  padding: 0.6rem 1.25rem;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 1rem;
-  align-items: baseline;
-}
-
-.nav-brand {
-  font-weight: 650;
+.side-brand {
+  display: block;
+  margin-bottom: 1.25rem;
   color: var(--fg-bright);
+  font-weight: 650;
   text-decoration: none;
-  margin-right: auto;
 }
 
-.nav a {
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.side-nav a {
+  padding: 0.35rem 0.6rem;
+  border-left: 2px solid transparent;
+  border-radius: 0 4px 4px 0;
   color: var(--fg-dim);
+  font-size: 0.9rem;
   text-decoration: none;
-  font-size: 0.875rem;
 }
 
-.nav a:hover {
-  color: var(--accent);
+.side-nav a:hover {
+  background: var(--bg-soft);
+  color: var(--fg-bright);
 }
 
-.nav a[aria-current="page"] {
+/* Where you are, marked on the rail rather than by colour alone. */
+.side-nav a[aria-current="page"] {
+  border-left-color: var(--accent);
+  background: var(--bg-soft);
   color: var(--fg-bright);
   font-weight: 600;
 }
 
-.nav-app {
-  color: var(--accent) !important;
+.side-app {
+  display: block;
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+  color: var(--accent);
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.side-app:hover {
+  text-decoration: underline;
 }
 
 /* ---- Content ---------------------------------------------------------- */
 
+.content {
+  min-width: 0;
+}
+
 main {
   max-width: var(--measure);
-  /* The side padding is the phone gutter; it must survive the centring. */
-  margin: 0 auto;
-  padding: 2.5rem 1.25rem 5rem;
+  padding: 2.5rem 2rem 4rem;
 }
 
 h1,
@@ -289,39 +331,71 @@ img {
   margin: 1.25rem 0;
 }
 
-/* ---- Footer ----------------------------------------------------------- */
-
-.foot {
-  max-width: var(--measure);
-  margin: 0 auto;
-  padding: 1.5rem 1.25rem 3rem;
-  border-top: 1px solid var(--rule);
-  color: var(--fg-dim);
-  font-size: 0.875rem;
-}
-
-.foot a {
-  color: var(--accent-dim);
-}
-
-/*
- * Declared before the narrow-screen override below: equal specificity means
- * source order decides, so a base rule written after the media query would
- * silently win and the page list would never collapse.
- */
-.nav-pages {
-  display: contents;
-}
-
 /* ---- Narrow screens --------------------------------------------------- */
 
-@media (max-width: 34rem) {
-  body {
-    font-size: 15px;
+/*
+ * Below the width that fits a sidebar and a readable measure side by side, the
+ * column becomes a block above the prose and the page list lies down into rows.
+ * Collapsing it behind a button was considered and rejected: eight links wrap
+ * into three rows, which is less page than a disclosure control plus the state
+ * it has to remember.
+ */
+@media (max-width: 54rem) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .side {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .side-inner {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+    padding: 1.25rem 1rem;
+  }
+
+  .side-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+  }
+
+  .side-nav a {
+    padding: 0.25rem 0.5rem;
+    border-left: 0;
+    border-radius: 4px;
+  }
+
+  .side-nav a[aria-current="page"] {
+    /* The rail is gone with the column, so the marker has to be the chip. */
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  .side-brand,
+  .side-app {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .side-brand {
+    margin-bottom: 0.75rem;
+  }
+
+  .side-app {
+    margin-top: 0.85rem;
   }
 
   main {
-    padding: 1.75rem 1rem 3.5rem;
+    padding: 1.75rem 1rem 3rem;
+  }
+
+  body {
+    font-size: 15px;
   }
 
   h1 {
@@ -331,13 +405,21 @@ img {
   h2 {
     font-size: 1.25rem;
   }
+}
 
-  .nav-inner {
-    padding: 0.5rem 1rem;
-  }
+.foot {
+  padding: 1.5rem 2rem 3rem;
+  border-top: 1px solid var(--rule);
+  color: var(--fg-dim);
+  font-size: 0.875rem;
+}
 
-  /* The full page list does not fit; the brand and the app link do. */
-  .nav-pages {
-    display: none;
+.foot a {
+  color: var(--accent-dim);
+}
+
+@media (max-width: 54rem) {
+  .foot {
+    padding: 1.25rem 1rem 2.5rem;
   }
 }

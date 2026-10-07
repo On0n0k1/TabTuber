@@ -345,18 +345,22 @@ export class Toolbar {
     this.group = group;
     this.el.append(group);
 
+    /*
+     * Choosing does NOT close the tray. Only the button that opened it closes
+     * it again.
+     *
+     * A menu that dismisses on selection would be the usual behaviour, and it
+     * is wrong here: these are not navigation, they are a performance control
+     * whose whole use is trying one expression after another and watching the
+     * avatar. Closing after each one means reopening the tray for every
+     * change, and it hides the run of buttons at the moment the lit one is
+     * the thing worth seeing.
+     */
     for (const option of item.options) {
       this.addButton({
         read: () => ({ icon: option.icon, on: item.get() === option.value }),
         tooltip: () => option,
-        click: () => {
-          item.set(nextGroup(item.get(), option.value, item.allowNone));
-          // A tray is a menu: choosing from it is the end of the interaction.
-          if (this.collapsed) {
-            this.trayOpen = false;
-            this.syncGroup();
-          }
-        },
+        click: () => item.set(nextGroup(item.get(), option.value, item.allowNone)),
         disabled: () => null,
       }, group);
     }

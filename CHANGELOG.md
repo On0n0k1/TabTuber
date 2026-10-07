@@ -1,3 +1,15 @@
+# [1.6.0](https://github.com/On0n0k1/TabTuber/compare/v1.5.0...v1.6.0) (2026-10-07)
+
+
+### Bug Fixes
+
+* **build:** resolve /docs to its index on both vite servers ([238c6a2](https://github.com/On0n0k1/TabTuber/commit/238c6a2a0f09e2a8240c23c37739c2c265eddb99))
+
+
+### Features
+
+* **ui:** link the documentation from the setup sheet ([ed1ab60](https://github.com/On0n0k1/TabTuber/commit/ed1ab6000ddd0f246bffcb6e77495ff8f30c8feb))
+
 # [1.5.0](https://github.com/On0n0k1/TabTuber/compare/v1.4.0...v1.5.0) (2026-10-07)
 
 

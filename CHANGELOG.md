@@ -1,3 +1,10 @@
+# [1.7.0](https://github.com/On0n0k1/TabTuber/compare/v1.6.0...v1.7.0) (2026-10-07)
+
+
+### Features
+
+* **ui:** link the author's portfolio from the main screen ([7e6d7e4](https://github.com/On0n0k1/TabTuber/commit/7e6d7e41303ffa17a7b34cb882d865dd478e3abd))
+
 # [1.6.0](https://github.com/On0n0k1/TabTuber/compare/v1.5.0...v1.6.0) (2026-10-07)
 
 

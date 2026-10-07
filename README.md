@@ -11,7 +11,8 @@ the tracking runs in the page, and the avatar is drawn in the page. No video,
 no audio and no landmark data is uploaded, because there is no server to upload
 it to — the whole application is a static site. Loading it once is enough.
 
-**[Open the app →](https://on0n0k1.github.io/projects/tabtuber/)**
+**[Open the app →](https://on0n0k1.github.io/projects/tabtuber/)** ·
+**[More projects →](https://on0n0k1.github.io)**
 
 ### Using it
 
@@ -405,3 +406,7 @@ and `AvatarSample_B` — are VRoid Studio sample models authored by **pixiv VRoi
 Project**, usable by anyone in any activity with no credit required, but **not**
 to be re-licensed as CC0 and **not** to be used to build a character-creation
 service. See [docs/choosing-an-avatar.md](docs/choosing-an-avatar.md).
+
+---
+
+Built by [Lucas Lemos](https://on0n0k1.github.io).

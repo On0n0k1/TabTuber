@@ -4,8 +4,12 @@
  * On the canvas rather than in the debug panel because the panel is docked
  * right and collapsible, and this is a number you want visible while moving
  * about in front of the camera -- which is exactly when the panel is not
- * where you are looking. Top LEFT for the same reason: the panel covers the
- * right edge.
+ * where you are looking.
+ *
+ * Positioned by the stylesheet, directly under the camera preview in the
+ * top-left stack. The two figures are read together: the camera rate below
+ * explains the latency above it, and both describe the picture immediately
+ * over them.
  *
  * It is a budget readout, not a diagnostic. SPEC.md 9 puts the whole chain at
  * under about 100ms before the avatar stops feeling attached to the

@@ -18,6 +18,39 @@
  */
 :root {
   --panel-inset: 268px;
+
+  /*
+   * Top of the left-hand stack: the camera preview, with the latency readout
+   * directly under it. Both anchor to this, so the one rule that moves the
+   * stack clear of the status banner moves all of it -- rather than each
+   * element knowing about the banner separately and one of them being
+   * forgotten.
+   */
+  --hud-top: 12px;
+
+  /*
+   * How far the readout has to drop to clear the preview: its measured height
+   * plus a gap, or 0 when there is no preview on screen. Written by main,
+   * because the preview's height depends on the viewport and on the camera's
+   * aspect ratio, and CSS cannot see either (SPEC.md 9.2).
+   */
+  --preview-stack: 0px;
+}
+
+/*
+ * The banner is full width at the top with a higher z-index, so without this
+ * the stack under it disappears -- exactly when something has gone wrong,
+ * which is when both the preview and a latency figure are most worth having.
+ *
+ * Driven by an attribute StatusBanner sets, not by `:has()`. `:has` reads
+ * better and couples nothing, but a browser without it drops the rule and
+ * leaves the stack underneath, which is the very failure this prevents --
+ * and it fails silently.
+ */
+body[data-banner] {
+  /* The banner measures itself; the fallback covers the one-line case if it
+     somehow has not reported yet. */
+  --hud-top: calc(var(--banner-height, 48px) + 12px);
 }
 
 html,
@@ -134,10 +167,12 @@ body[data-bg="key"] {
 }
 
 /*
- * Camera preview, bottom LEFT. lil-gui docks itself to the right edge and is
- * tall enough to cover a preview placed there, which hides the camera at
- * exactly the moment it is most wanted: first load, when you are checking
- * whether tracking came up at all.
+ * Camera preview, top LEFT, with the latency readout under it. Left because
+ * lil-gui docks itself to the right edge and is tall enough to cover a
+ * preview placed there, which hides the camera at exactly the moment it is
+ * most wanted: first load, when you are checking whether tracking came up at
+ * all. Top because the bottom edge belongs to the performer toolbar, which is
+ * centred and grows sideways as controls are added.
  *
  * Mirrored for display only -- the pixels handed to the tracker are never
  * flipped (see src/capture/camera.ts).
@@ -157,7 +192,7 @@ body[data-bg="key"] {
 #ui video {
   position: fixed;
   left: 12px;
-  bottom: 12px;
+  top: var(--hud-top);
   --preview-ar: 1.3333;
   width: min(240px, 30vw, calc(25vh * var(--preview-ar)));
   height: auto;
@@ -174,7 +209,7 @@ body[data-bg="key"] {
 .overlay2d {
   position: fixed;
   left: 12px;
-  bottom: 12px;
+  top: var(--hud-top);
   transform: scaleX(-1);
   pointer-events: none;
   z-index: 6;
@@ -188,10 +223,10 @@ body[data-bg="key"] {
  * moment it is wanted. It therefore has to be worth looking at, and it has to
  * stay put -- a bar that moved would invalidate the crop.
  *
- * Bottom centre rather than bottom left, because the camera preview is
- * already pinned to the left corner. On a narrow window the two can still
- * meet, and the bar wins: it sits above the preview, which is a dev affordance
- * with a toggle of its own.
+ * Bottom centre, and it now has the bottom edge to itself: the camera
+ * preview and the latency readout both moved to the top-left corner, so the
+ * bar is free to grow sideways as controls are added without meeting them on
+ * a narrow window.
  */
 .toolbar {
   position: fixed;
@@ -340,15 +375,22 @@ body[data-bg="key"] {
 }
 
 /*
- * Latency readout, top LEFT (SPEC.md 9.2).
+ * Latency and camera frame rate, directly under the preview (SPEC.md 9.2).
  *
- * Left because the debug panel is docked right and would cover it. It sits
- * under the banner rather than beside it: the banner is for blocking
- * conditions, and when one is up, latency is not what the reader needs.
+ * Under the preview rather than anywhere else because the two are read
+ * together: the rate explains the latency above it, and both describe the
+ * camera whose picture is immediately above them. Left, and below the banner,
+ * for the reasons the stack as a whole is -- see --hud-top.
+ *
+ * --preview-stack collapses to 0 when the preview is hidden, so the readout
+ * rises to the top corner instead of floating under a gap. It cannot be
+ * derived in CSS: the preview is hidden by opacity, which deliberately keeps
+ * its layout box (see the end of this file), so nothing about the box itself
+ * says whether anything is visible in it.
  */
 .latency {
   position: fixed;
-  top: 12px;
+  top: calc(var(--hud-top) + var(--preview-stack));
   left: 12px;
   z-index: 4;
   display: flex;
@@ -405,24 +447,6 @@ body[data-bg="key"] {
 
 .latency[hidden] {
   display: none;
-}
-
-/*
- * Out from under the banner while one is up.
- *
- * The banner is full width at the top with a higher z-index, so without this
- * the readout disappears behind it -- exactly when something has gone wrong,
- * which is when a number is most worth having.
- *
- * Driven by an attribute StatusBanner sets, not by `:has()`. `:has` reads
- * better and couples nothing, but a browser without it drops the rule and
- * leaves the readout underneath, which is the very failure this prevents --
- * and it fails silently.
- */
-body[data-banner] .latency {
-  /* The banner measures itself; the fallback covers the one-line case if it
-     somehow has not reported yet. */
-  top: calc(var(--banner-height, 48px) + 12px);
 }
 
 /* Within the budget SPEC.md 9 sets for the whole chain. */

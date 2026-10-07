@@ -78,5 +78,41 @@ for (const cls of HIDEABLE) {
     "-- el.hidden will set the attribute and change nothing on screen");
 }
 
+/*
+ * The landmark overlay has to sit exactly over the camera preview, and the
+ * two are positioned by separate rules -- the overlay's size comes from
+ * JavaScript, but where its box starts comes from here. Nothing else ties the
+ * two rules together, so they can be moved apart one at a time, and the
+ * result is a skeleton offset from the body it is drawn on: wrong in a way
+ * that looks like a tracking fault rather than a stylesheet edit.
+ */
+const ANCHORED = ["top", "left"];
+
+/** The declaration block for a selector written on its own line. */
+function ruleBody(selector: string): string {
+  const pattern = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  const match = css.match(new RegExp(`(?:^|\n)\\s*${pattern}\\s*\\{([^}]*)\\}`));
+  return match?.[1] ?? "";
+}
+
+function declaration(body: string, prop: string): string {
+  const match = body.match(new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`));
+  return match?.[1]?.trim() ?? "";
+}
+
+const previewRule = ruleBody("#ui video");
+const overlayRule = ruleBody(".overlay2d");
+check("the preview and overlay rules are both found",
+  previewRule !== "" && overlayRule !== "",
+  "-- a selector was renamed and the checks below now compare nothing");
+
+for (const prop of ANCHORED) {
+  const preview = declaration(previewRule, prop);
+  const overlay = declaration(overlayRule, prop);
+  check(`the overlay matches the preview on ${prop}`,
+    preview !== "" && preview === overlay,
+    `-- preview "${preview}", overlay "${overlay}"; the skeleton will be offset`);
+}
+
 if (failures > 0) throw new Error(`${failures} style check failure(s)`);
 console.log("\nALL PASS");

@@ -130,6 +130,15 @@ const DEFAULT_POSTURE: PostureMode = "sitting";
 const SITTING_HIP_CUTOFF_SCALE = 0.4;
 
 /**
+ * Gap between the camera preview and the latency readout beneath it.
+ *
+ * Here rather than in the stylesheet because it is only ever added to a
+ * measured height, and a gap that lived in CSS would have to be cancelled
+ * again whenever that height collapsed to zero.
+ */
+const PREVIEW_GAP_PX = 8;
+
+/**
  * Decide where the tracker runs, once, at startup.
  *
  * Three tiers, in order of how much of SPEC.md 9.5's stall they move off the
@@ -292,6 +301,10 @@ async function boot(): Promise<void> {
       if (visible) delete el.dataset["hidden"];
       else el.dataset["hidden"] = "";
     }
+    // The latency readout sits under the preview and has to come back up to
+    // the corner when there is no longer a preview to sit under. Hiding is by
+    // opacity, so the box stays and CSS cannot work this out for itself.
+    syncPreviewStack();
   };
   const latencyHud = new LatencyHud(ui);
 
@@ -417,6 +430,21 @@ async function boot(): Promise<void> {
   let previewH = 0;
 
   /*
+   * How far the latency readout drops to clear the preview, as the stylesheet
+   * expects it (SPEC.md 9.2). Zero when there is no preview to clear, so the
+   * readout returns to the top corner rather than floating under a gap --
+   * which is also exactly where it sat before the preview moved up there.
+   *
+   * One writer for both inputs, size and visibility, because two places
+   * setting the same property independently is how one of them ends up
+   * holding a figure the other has already invalidated.
+   */
+  const syncPreviewStack = (): void => {
+    const stack = previewVisible && previewH > 0 ? previewH + PREVIEW_GAP_PX : 0;
+    document.body.style.setProperty("--preview-stack", `${stack}px`);
+  };
+
+  /*
    * One observer for the life of the page, rather than a measurement taken
    * when a camera comes up. The box used to be a constant 240px, so reading
    * it once was enough; now that it is capped against the viewport, a
@@ -435,6 +463,7 @@ async function boot(): Promise<void> {
     previewW = rect.width;
     previewH = rect.height;
     overlay.resize(rect.width, rect.height);
+    syncPreviewStack();
   }).observe(camera.element);
 
   const renderFps = new FpsMeter();

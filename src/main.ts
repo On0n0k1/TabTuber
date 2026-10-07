@@ -66,6 +66,7 @@ import { LatencyHud } from "./ui/latencyHud.ts";
 import {
   clearAllSettings,
   clearSetting,
+  once,
   readJson,
   readSetting,
   writeJson,
@@ -139,15 +140,28 @@ function boot(): void {
   const stage = new Stage(canvas);
   const camera = new Camera();
   /*
+   * Everyone starts on pose, once, including people who already have
+   * `holistic` stored from before it was a choice (SPEC.md 11).
+   *
+   * Reaching them is the whole point. A stored `holistic` is almost never a
+   * decision -- it is the old default, written by every visit that ever
+   * touched the control -- and leaving it alone would mean the people most
+   * affected by a 288ms inference are the only ones the new default never
+   * reaches. They are moved once; whatever they pick next is theirs.
+   */
+  if (once("backend-default-pose")) writeSetting("backend", "pose");
+
+  /*
    * Face blendshapes force the CPU delegate, so that choice is made when the
    * tracker is built and changing it rebuilds (see HolisticTrackerOptions).
    *
    * `backend` is remembered for the same reason `delegate` is, and one more:
-   * a device slow enough to want pose would otherwise download Holistic's
-   * 14MB on every visit before switching away from it (SPEC.md 9.5).
+   * it is now the desktop that pays for a wrong guess, since switching back
+   * to Holistic costs its 13MB on top of the 9MB already fetched (SPEC.md
+   * 9.5). Paying that once is the trade; paying it every visit is not.
    */
   const trackerConfig = {
-    backend: readSetting<TrackerBackend>("backend", TRACKER_BACKENDS, "holistic"),
+    backend: readSetting<TrackerBackend>("backend", TRACKER_BACKENDS, "pose"),
     faceBlendshapes: false,
     /*
      * Remembered, because the whole point is to compare devices: the phone

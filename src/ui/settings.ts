@@ -33,6 +33,33 @@ export function readSetting<T extends string>(
   }
 }
 
+/**
+ * True the first time it is called with a given id, false ever after.
+ *
+ * For moving people who already have a value stored onto a changed default.
+ * A read of a stored setting cannot tell "chose this" from "was given this
+ * by the old default", so changing a default reaches nobody who has run the
+ * app before -- which is most people -- without something like this.
+ *
+ * A one-time reset rather than a forced value, deliberately. Pinning the
+ * setting would make the control that changes it a lie; this moves everyone
+ * once and then leaves their next choice alone.
+ *
+ * False when storage is unreadable, which is the safe direction: the
+ * caller's fallback already applies there, so there is nothing to migrate
+ * and the write would only throw.
+ */
+export function once(id: string): boolean {
+  try {
+    const key = `${PREFIX}once:${id}`;
+    if (localStorage.getItem(key) !== null) return false;
+    localStorage.setItem(key, "1");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function writeSetting(key: string, value: string): void {
   try {
     localStorage.setItem(PREFIX + key, value);

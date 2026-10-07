@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/On0n0k1/TabTuber/compare/v1.2.0...v1.2.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **tracker:** resolve the pose model through the vite base ([a6ef7d1](https://github.com/On0n0k1/TabTuber/commit/a6ef7d10f696d05f1813800ae4abd15473c76528))
+
 # [1.2.0](https://github.com/On0n0k1/TabTuber/compare/v1.1.0...v1.2.0) (2026-10-07)
 
 

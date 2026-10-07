@@ -1,208 +1,249 @@
 # Troubleshooting
 
-These are measured behaviours rather than guesses. Each one cost somebody real
-time to discover, which is why it is written down instead of left to be
-rediscovered.
+Find your symptom. Each fix is something that has actually caught someone out.
 
 ---
 
-## Turn a light on first
+## Start here
 
-**Lighting sets your frame rate, and your frame rate sets everything else.**
-This is the single most useful piece of advice in this documentation.
+Two things account for most problems:
 
-A webcam lengthens its exposure in dim light and drops its frame rate to suit.
-There is no setting to override it — it is the camera's decision, made before
-any of this code sees a frame. Measured here on one machine:
-
-| | Dim room | Lamp on |
-|---|---|---|
-| Camera frame rate | 11fps | 30fps |
-| Total latency | 180ms | 90ms |
-
-**Half the latency, from a lamp.** Nothing was changed in the application
-between those two measurements.
-
-**Below about 15fps, no setting in the application can compensate.** Smoothing
-cannot invent frames that were never captured, and every filter in the pipeline
-is working from a signal that is arriving too slowly to be smooth. If the
-avatar feels laggy or stuttery, check the **fps number in the top-left corner**
-before you change anything else. It turns amber below 20fps for this reason.
-
-A lamp pointed at your face, not at the wall behind you. Backlight makes the
-camera expose for the window and underexpose you, which is the same problem
-with extra steps.
+1. **Is there a light on your face?** Check the **fps number** under the camera
+   preview. Amber means not enough light, and that affects everything else.
+   → [Light yourself properly](tracking-quality.md#light-yourself-properly)
+2. **Is there a message at the top of the page?** Errors stay up until you
+   dismiss them and usually say exactly what is wrong.
 
 ---
 
-## Things that surprise people
+## Nothing appears
 
-### Hiding the camera preview does not stop tracking
+### The page is blank, or stuck on a message
 
-The eye icon hides the picture. That is all it does. Tracking continues, the
-camera light stays on, and the avatar keeps following you.
+The first load fetches the tracking model, which takes a few seconds. The bar at
+the top tells you what it is doing.
 
-There is no control in the application that stops the camera. Close the tab or
-revoke the permission in your browser.
+If it stays stuck: reload. If it is still stuck, your connection is probably
+blocking the download.
 
-### Face tracking is not free, and the cost is not confined to the face
+### "Camera permission was denied"
 
-Turning on face tracking **forces the entire pipeline onto the CPU**, because
-of how the blendshape model is compiled. So it costs you body and hand tracking
-frame rate, not just its own. It also rebuilds the tracker, so there is a pause
-when you toggle it.
+Your browser blocked the camera, or you clicked Block. Look for a camera icon in
+your browser's address bar, allow it, and reload the page.
 
-If the whole avatar got worse when you turned on blink and gaze, this is why,
-and it is working as designed rather than failing.
+### No camera error, but no avatar either
 
-### Body-only tracking is the default, for everyone
+Check the panel on the right is not hiding it, and try switching avatar in
+**Setup**. If an avatar fails to load, the top bar says so.
 
-Out of the box there are **no individual fingers and no camera-driven blink or
-gaze**. This is not a bug and it is not a phone-only default — everybody starts
-here, including people who had the fuller model stored from before it was a
-choice.
+### It will not use my camera at all
 
-The fuller model costs roughly three and a half times the frame rate. The
-**Tracking** button switches to `full` when you want hands and face, and
-remembers it.
-
-### It runs on a phone, but not at full tracking
-
-| On one phone | |
-|---|---|
-| Body-only | ~11.8fps |
-| Full tracking | ~3.4fps |
-
-That is the difference between an avatar that follows you and one that lurches.
-Body-only is already the default, so there is nothing you need to do. If you
-switch to `full` on a phone, expect it to struggle, and switch back.
-
-The numbers behind this are in [performance.md](performance.md).
-
-### Legs are not tracked while sitting
-
-By choice, and necessarily. The tracker reports **confident** positions for legs
-it cannot see, so an avatar given that data stands up regardless of what your
-lower body is doing. Ignoring the legs outright is more honest than believing a
-confident guess.
-
-This is also why posture is a button rather than something detected: detecting
-it would mean reading leg visibility, which is the exact signal that cannot be
-trusted here.
-
-### Lip sync comes from your microphone, not your camera
-
-Camera-driven mouth shapes were built and removed. The tracking was not good
-enough to be worth the cost. See [lipsync.md](lipsync.md).
-
-### The panel on the right is not settings
-
-It is a diagnostic tool. You should never need it, and opening it is an
-invitation to change something and then wonder why the avatar looks wrong.
-Everything a first run depends on is in **Setup**, behind the leftmost toolbar
-button.
+The page needs a **secure address** to access a camera: `https://` or
+`localhost`. If you are opening it over your home network by IP address
+(`http://192.168...`), browsers refuse camera access and always will.
 
 ---
 
-## Specific problems
+## Something is wrong with the camera
 
-### The first start takes minutes
+### The wrong camera is being used
 
-Expected once. `npm run fetch-assets` stages roughly 57MB before the page will
-open — about 34MB of WebAssembly copied out of `node_modules` and about 23MB of
-tracking models downloaded. It is idempotent and skips what it already has.
+**Setup → Camera**, and pick the one you want.
 
-A failure here is almost always the network rather than the project. Run
-`npm run fetch-assets` on its own to see the error by itself.
+If it says **"(current camera unknown)"**, your browser is not reporting which
+camera it chose — choosing one from the list explicitly settles it.
 
-### The avatar does not appear, or the page shows a camera error
+If it says **"no camera found"**, your browser is not seeing any camera. Check it
+is plugged in and that nothing else has exclusive hold of it.
 
-Check the **status bar along the top** — camera permission denied and model load
-failures are both reported there. Errors stay up until dismissed and are also
-written to the browser console.
+### Another app has my camera
 
-The page needs a **secure context** for camera access: `https://` or
-`localhost`. An `http://` address on your LAN will not get a camera, which is
-the usual reason testing from a phone over the network fails.
+Close video calls and anything else using the camera. Some apps will let the
+camera be shared but force it to a lower frame rate, which looks like a
+performance problem rather than a conflict.
 
-### The wrong camera is running
+### Turning off the preview did not turn off my camera
 
-Open **Setup** and pick one explicitly. If it reads **"(current camera
-unknown)"**, the browser has declined to report which device is actually
-feeding the tracker — the first start names no device and lets the browser
-choose, and its choice is not reliably the first one listed. Choosing one
-settles it.
+**It is not supposed to.** The eye icon hides the picture only — tracking carries
+on, and the camera light stays on.
 
-If it reads **"no camera found"**, nothing was enumerated at all.
+There is no control in the app that stops the camera. Close the tab or revoke the
+permission in your browser.
 
-### The avatar moves sluggishly, or under-rotates
+---
 
-Likely a **model** problem rather than a tracking one. A missing humanoid bone
-drops its share of the rotation rather than passing it to a neighbour, so the
-avatar under-rotates in a way that reads as sluggishness.
+## The avatar moves badly
 
-Run `npm run inspect-vrm <path>` — it names any missing bones without needing a
-browser. See [avatars.md](avatars.md).
+### Everything is laggy or stuttery
+
+**Light first.** Check the fps number — if it is amber, that is your answer.
+→ [Tracking quality](tracking-quality.md#light-yourself-properly)
+
+Then, in order: switch to **body-only** tracking, turn off **face tracking**,
+turn off **finger tracking**, close other tabs.
+→ [When it is still bad](tracking-quality.md#when-it-is-still-bad)
+
+### It got much worse when I turned on blinking
+
+Expected. **Face tracking forces the whole pipeline onto a slower path**, so your
+body and hand tracking slow down too, not just the face. Turn it back off if you
+cannot spare the frame rate.
+→ [Face tracking costs more than you would think](tracking-quality.md#face-tracking-costs-more-than-you-would-think)
+
+### The avatar moves less than I do, or seems sluggish
+
+Likely your **model**, not the tracking. A missing bone silently drops its share
+of the movement, so the avatar under-rotates — which reads as sluggishness rather
+than as an error.
+
+Try one of the bundled avatars. If that moves properly, it is your model.
+→ [What makes a model work well](choosing-an-avatar.md#what-makes-a-model-work-well)
 
 ### The hands jitter
 
-Expected, especially with finger tracking on. Finger precision depends on how
-many pixels your hand occupies in the frame, so a hand far from the camera is
-being tracked from very little information. Finger tracking is marked
-experimental partly because it makes this much easier to see.
+Normal, and most visible with finger tracking on. Fingers are tracked from pixels,
+so a hand far from the camera is tracked from very little.
 
-Move closer to the camera, improve the lighting, or turn finger tracking off.
+Move closer, add light, or turn finger tracking off.
 
-### The mouth is binary — fully open or shut
+### My avatar is standing up while I am sitting down
 
-If you run aggressive upstream noise gating (EasyEffects, RNNoise, NVIDIA
-Broadcast), this is a **known and measured limitation**. Hard gating produces
-digital silence between words, the self-calibrating noise floor collapses, and
-the normalisation saturates — measured at 89% of speech frames pinned fully
-open.
+**Press the posture button** to switch to sitting.
 
-Relax or disable the upstream gate and let this application's own duration gate
-do that job. See [lipsync.md](lipsync.md#a-known-limitation-upstream-hard-gating).
+The tracker reports your legs confidently even when it cannot see them under a
+desk, so the avatar believes them. Sitting mode throws that data away.
+→ [Sitting or standing](performing.md#sitting-or-standing)
 
-### My avatar mouths along to my game audio
+### My fingers do not move
 
-Turn **`echoCancellation`** on — it is on by default, so something has turned it
-off. Or monitor on headphones.
+Three possible reasons:
 
-### Viewers see my toolbar
+1. **Tracking is set to body-only** — the default. Switch to full tracking.
+2. **Finger tracking is off.** It is a separate button from tracking mode.
+3. **Your model has no finger bones.** Try a bundled avatar to tell the
+   difference.
 
-The toolbar, the corner readout and the debug panel are page elements over the
-transparent canvas, so OBS captures them with the avatar. Crop them out; they
-never move, so one crop filter stays valid. See [obs.md](obs.md#crop-the-toolbar-out).
+### My avatar does not blink, or its eyes do not move
 
-### My voice arrives before the avatar speaks
+Blinking runs on a timer by default and should always happen. For blinking and
+eye movement that follow *your* face, you need full tracking **and** the face
+tracking button.
 
-Only if you turned **lookahead** on in the debug panel. Add a positive sync
-offset to your microphone source in OBS to delay the audio — **later**, not
-earlier. See [obs.md](obs.md#audio-is-realigned-in-obs-not-in-the-page).
+If the eyes never move even then, your model may have no eye bones.
 
-### The dev server fails with `ENOSPC`
+### Raising my right hand raises the wrong one
 
-Not a project fault. Your system's inotify watch limit has been exhausted,
-usually by editors. Raise `fs.inotify.max_user_watches`, or use
-`npm run build && npm run preview`, which needs no file watchers.
-
-### Expression number keys do nothing
-
-They are ignored while focus is in a text field, including a value being typed
-into the debug panel. Click the page background and try again.
+That is mirroring, and it is on by default on purpose — the avatar behaves like a
+mirror. Turn **Mirror** off in Setup if you want it to face you like another
+person instead.
 
 ---
 
-## Starting clean
+## The mouth is wrong
 
-If settings have got into a state you want rid of: the debug panel's `Session`
-folder has **clear saved settings**, which removes everything stored and needs a
-**reload** to take effect.
+### It does not move at all
 
-Note that **reset panel to defaults** is a different thing — it restores
-controls to the value they were created with, which for a remembered setting is
-the remembered value rather than the application's original one.
+Check the microphone icon is lit and that your browser granted microphone
+permission. Open the panel on the right, find the **Mic** readouts, and check
+`level` moves when you talk.
 
-Six things persist: the tracking backend, whether lip sync is on, your posture,
-your vowel calibration, the delegate preference, and the inference rate cap.
+### It moves when I am not talking
+
+If it is following your game audio, turn **echoCancellation** on, or use
+headphones. Otherwise raise **min duration** or **open level** in the Lip sync
+folder.
+
+### It snaps fully open and shut with nothing in between
+
+A known problem. You are almost certainly running **aggressive noise removal
+before the browser** — EasyEffects, RNNoise, NVIDIA Broadcast. Those produce
+complete silence between words, which breaks the app's measurement of your room.
+
+Turn the upstream noise removal down or off.
+→ [Full explanation](lip-sync.md#if-the-mouth-is-snapping-fully-open-and-shut)
+
+### It looks like a puppet just flapping
+
+Switch the mouth mode to **animated**, or calibrate and use **vowel**.
+→ [The three mouth modes](lip-sync.md#the-three-mouth-modes)
+
+### I switched to vowel mode and nothing changed
+
+You have not calibrated yet. Vowel mode behaves exactly like animated until you
+do.
+→ [Calibrating your vowels](lip-sync.md#calibrating-your-vowels)
+
+---
+
+## Streaming problems
+
+### My viewers can see my toolbar
+
+Crop it out. The toolbar is part of the page, so OBS captures it with the
+avatar. It never moves, so one crop filter lasts.
+→ [Crop the interface out](streaming-with-obs.md#crop-the-interface-out)
+
+### The background is green on stream
+
+Set **Background → `transparent`** if you are using a Browser Source, or add a
+**Chroma Key** filter if you are using Window Capture.
+→ [Streaming with OBS](streaming-with-obs.md)
+
+### There is a green fringe around the hair
+
+Chroma keying always costs a little edge quality. Tune the Chroma Key filter's
+similarity and smoothness, or switch to a **Browser Source**, which has real
+transparency and no fringe at all.
+→ [The better way](streaming-with-obs.md#the-better-way-browser-source)
+
+### OBS will not give the page my camera
+
+A known awkwardness with Browser Sources. If the workarounds do not help, use
+**Window Capture** instead — permissions simply work there.
+→ [Deal with camera permission](streaming-with-obs.md#3-deal-with-camera-permission)
+
+### Parts of my avatar are transparent on stream
+
+You are chroma keying and your avatar is wearing green. Either change the outfit
+or switch to a Browser Source.
+
+### My voice is ahead of the avatar
+
+Only happens if you turned on **lookahead**. Add a positive sync offset to your
+microphone in OBS — later, not earlier.
+→ [Audio sync](streaming-with-obs.md#audio-sync)
+
+### The expression keys do nothing while I stream
+
+The keys only work when the **browser window** has focus, not OBS. Click into the
+browser window, or keep it on a second monitor.
+
+### The expression keys do nothing at all
+
+They are ignored while your cursor is in a text box. Click an empty part of the
+page and try again.
+
+---
+
+## Starting over
+
+If settings have ended up in a state you want rid of:
+
+Open the panel on the right, find **Session**, and press **clear saved
+settings**. Then **reload the page**.
+
+That clears your remembered tracking mode, lip sync state, posture and vowel
+calibration.
+
+Note that **reset panel to defaults** next to it is a different thing — it only
+resets the panel's own controls, and for anything remembered it resets to the
+remembered value rather than the original.
+
+---
+
+## Still stuck
+
+Nothing here matching? The browser console records every message the app raises,
+including ones that cleared themselves — open your browser's developer tools and
+look at the Console tab. That is the most useful thing to include if you report a
+problem.

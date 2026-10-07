@@ -250,6 +250,57 @@ body[data-bg="key"] {
   display: none;
 }
 
+/*
+ * A collapsible run of buttons -- the expressions (SPEC.md 9.1).
+ *
+ * ONE element with two presentations, rather than two sets of buttons swapped
+ * over. In the bar it is an ordinary part of the row; folded it becomes a tray
+ * above the bar. Nothing moves in the DOM and nothing is rebuilt, so the
+ * buttons keep their identity across the change and a selection cannot be
+ * shown by one presentation and missed by the other.
+ */
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Load-bearing, not tidiness: the rule above sets `display`, so without this
+   `hidden` sets an attribute that nothing acts on. See `.banner[hidden]`. */
+.toolbar-group[hidden] {
+  display: none;
+}
+
+/*
+ * Folded: the same buttons, in a tray over the bar.
+ *
+ * Absolute, so an open tray contributes nothing to the bar's width -- the bar
+ * measures itself to decide whether to fold, and a tray that widened it would
+ * make that measurement depend on whether the tray happened to be open.
+ *
+ * Anchored right rather than centred on its button: the run is the last thing
+ * on the bar, so its button is at the right end, and anchoring the tray there
+ * keeps it on screen without any arithmetic. 6px matches the bar's padding, so
+ * the tray's right edge lines up with the button's.
+ */
+.toolbar[data-group="folded"] .toolbar-group {
+  position: absolute;
+  right: 6px;
+  bottom: calc(100% + 8px);
+  padding: 6px;
+  border: 1px solid #3a3a44;
+  border-radius: 10px;
+  background: rgb(20 20 26 / 0.84);
+  backdrop-filter: blur(8px);
+}
+
+/* Same reason as `.toolbar-group[hidden]`: `.tool` sets `display: grid`, which
+   beats the browser's own `[hidden]` rule. The folded button is hidden this
+   way whenever the run itself is in the bar. */
+.tool[hidden] {
+  display: none;
+}
+
 .toolbar-divider {
   width: 1px;
   height: 22px;

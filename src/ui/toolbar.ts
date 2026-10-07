@@ -71,16 +71,42 @@ export interface CycleItem {
  * `allowNone` is what separates a set of modes from a set of choices. The
  * expressions allow none, because neutral is a real answer and clicking the
  * lit one should get you back to it.
+ *
+ * It is also the only item that can be FOLDED UP. A run of buttons is the
+ * widest thing the bar can hold, and the bar has a fixed set of controls on a
+ * screen whose width it does not get to choose, so when there is not room for
+ * the run it becomes one button that opens the run above the bar instead. All
+ * of it is still one item with one getter and one setter -- the two
+ * presentations are the same buttons, so they cannot disagree about which
+ * option is on.
  */
 export interface GroupItem {
   kind: "group";
   allowNone: boolean;
+  /**
+   * The single button the run folds into when the bar runs out of width.
+   *
+   * `icon` is the face it wears when nothing is selected; with a selection it
+   * shows that option's own icon, so the folded button is the same readout the
+   * run was rather than a disclosure arrow that says nothing.
+   */
+  collapsed: { label: string; tip: string; icon: IconName };
   options: readonly { value: string; label: string; tip: string; key?: string; icon: IconName }[];
   get: () => string | null;
   set: (value: string | null) => void;
 }
 
 export type ToolbarItem = ToggleItem | CycleItem | GroupItem | "divider";
+
+/**
+ * Clear space left either side of the bar before a group is folded up.
+ *
+ * The bar is centred, so this is the total of both margins. It decides only
+ * WHEN folding happens, never whether the result fits: folding is the most the
+ * bar can do, and on the narrowest phones the folded bar is still wider than
+ * this would like.
+ */
+const GUTTER_PX = 24;
 
 /** The state a click moves a cycle item to. */
 export function nextCycle(values: readonly string[], current: string): string {
@@ -117,6 +143,26 @@ export function needsRepaint(shown: ButtonPaint | null, next: ButtonPaint): bool
   );
 }
 
+/**
+ * Whether a collapsible group folds up, given the bar's width unfolded and
+ * the room available.
+ *
+ * Pulled out of the class and checked, because every way of getting it wrong
+ * is silent. Reversed, the bar folds on a wide screen and nothing throws.
+ * Fed the FOLDED width instead of the unfolded one, it answers "there is
+ * room" the moment folding has made room -- so it unfolds, no longer fits,
+ * folds again, and the bar flickers between the two forever at one particular
+ * window width. Hence the argument name: this takes the width the bar needs
+ * with the run in it, which the caller has to have remembered.
+ *
+ * A width of 0 means nothing has been measured yet, which is not the same as
+ * fitting in nothing.
+ */
+export function shouldFold(unfoldedWidth: number, available: number): boolean {
+  if (unfoldedWidth === 0) return false;
+  return unfoldedWidth > available;
+}
+
 /** The state a click moves a group item to. */
 export function nextGroup(
   current: string | null,
@@ -149,6 +195,16 @@ export class Toolbar {
   private readonly tipKey: HTMLSpanElement;
   private readonly buttons: Button[] = [];
 
+  /** The collapsible group's run of buttons, and the button it folds into. */
+  private group: HTMLSpanElement | null = null;
+  private folded: HTMLButtonElement | null = null;
+  private collapsed = false;
+  private trayOpen = false;
+  /** The bar's width with the run in it; see `fit`. */
+  private unfoldedWidth = 0;
+  private readonly onResize = (): void => this.fit();
+  private readonly observer: ResizeObserver;
+
   constructor(parent: HTMLElement, items: readonly ToolbarItem[]) {
     this.el = document.createElement("div");
     this.el.className = "toolbar";
@@ -178,8 +234,32 @@ export class Toolbar {
     for (const item of items) this.addItem(item);
     this.el.append(this.tip);
     parent.append(this.el);
+    this.syncGroup();
 
-    this.render();
+    /*
+     * The bar measures itself rather than trusting a breakpoint.
+     *
+     * A media query would need a pixel threshold standing for "the width of
+     * this particular set of controls", which is a figure nobody can read off
+     * the stylesheet and which quietly becomes wrong the first time a button
+     * is added. The bar knows its own width; the only thing it cannot know is
+     * how much room it has, and that is one property of the window.
+     *
+     * Recorded only while unfolded, because that is the figure `fit` needs and
+     * the folded bar cannot supply it. The width is a constant -- the controls
+     * are fixed at construction -- so one good reading is enough, and taking
+     * it from an observer rather than a frame callback means it is a reading
+     * taken after layout rather than a guess about when layout happened.
+     */
+    this.observer = new ResizeObserver(() => {
+      const width = this.el.getBoundingClientRect().width;
+      if (!this.collapsed && width > 0) this.unfoldedWidth = width;
+      this.fit();
+    });
+    this.observer.observe(this.el);
+    // The bar's own size does not change when the window does, so the
+    // observer alone would never hear about a resize that is the whole point.
+    window.addEventListener("resize", this.onResize);
   }
 
   private addItem(item: ToolbarItem): void {
@@ -225,17 +305,107 @@ export class Toolbar {
       return;
     }
 
+    /*
+     * The button the run folds into, then the run itself. Both are built
+     * once and both stay where they are: folding is a CSS state on the bar,
+     * not a rebuild and not a DOM move. The run keeps its identity either
+     * way, so a selection made in the tray is already shown by the same
+     * button when the window widens and the run returns to the bar.
+     */
+    const folded = this.addButton({
+      read: () => {
+        const active = item.get();
+        const option = item.options.find((o) => o.value === active);
+        return { icon: option?.icon ?? item.collapsed.icon, on: active !== null };
+      },
+      tooltip: () => {
+        const active = item.get();
+        const option = item.options.find((o) => o.value === active);
+        // Names the option you are WEARING, since the icon already shows it.
+        return {
+          label: option ? `${item.collapsed.label}: ${option.label}` : item.collapsed.label,
+          tip: item.collapsed.tip,
+        };
+      },
+      click: () => {
+        this.trayOpen = !this.trayOpen;
+        this.syncGroup();
+        // The tray opens where the tooltip sits and the pointer is still over
+        // the button, so the tooltip would land on top of what just opened.
+        this.hideTip();
+      },
+      disabled: () => null,
+    });
+    // Hidden until the bar runs out of room for the run it replaces.
+    folded.hidden = true;
+    this.folded = folded;
+
+    const group = document.createElement("span");
+    group.className = "toolbar-group";
+    this.group = group;
+    this.el.append(group);
+
     for (const option of item.options) {
       this.addButton({
         read: () => ({ icon: option.icon, on: item.get() === option.value }),
         tooltip: () => option,
-        click: () => item.set(nextGroup(item.get(), option.value, item.allowNone)),
+        click: () => {
+          item.set(nextGroup(item.get(), option.value, item.allowNone));
+          // A tray is a menu: choosing from it is the end of the interaction.
+          if (this.collapsed) {
+            this.trayOpen = false;
+            this.syncGroup();
+          }
+        },
         disabled: () => null,
-      });
+      }, group);
     }
   }
 
-  private addButton(spec: Omit<Button, "el" | "icon" | "shown">): void {
+  /**
+   * Which of the group's two presentations is on screen.
+   *
+   * Everything about folding goes through here, so the folded button, the
+   * run's visibility and the attribute the stylesheet reads can never be left
+   * describing different states.
+   */
+  private syncGroup(): void {
+    const { group, folded } = this;
+    if (!group || !folded) return;
+    this.el.dataset["group"] = this.collapsed ? "folded" : "inline";
+    folded.hidden = !this.collapsed;
+    // A disclosure, which `render` has no way to express: its aria-pressed
+    // says whether an expression is on, not whether the tray is showing.
+    folded.setAttribute("aria-expanded", this.trayOpen ? "true" : "false");
+    // In the bar the run is simply part of it; folded it is a tray, and a
+    // tray is only on screen while it is open.
+    group.hidden = this.collapsed && !this.trayOpen;
+  }
+
+  /**
+   * Fold the group up, or let it back out, according to the room available.
+   *
+   * The width compared against is the bar's own width while UNFOLDED, which is
+   * recorded by the observer below and is a constant: the set of controls is
+   * fixed at construction. It has to be remembered rather than re-measured,
+   * because once the bar is folded the width it would need in order to unfold
+   * is no longer anywhere on screen to measure -- asking the folded bar
+   * whether it fits would always answer yes, and it would never unfold again.
+   */
+  private fit(): void {
+    const collapse = shouldFold(this.unfoldedWidth, window.innerWidth - GUTTER_PX);
+    if (collapse === this.collapsed) return;
+    this.collapsed = collapse;
+    // A tray left open across a resize would float over a bar that now has
+    // the run in it, showing the same five buttons twice.
+    if (!collapse) this.trayOpen = false;
+    this.syncGroup();
+  }
+
+  private addButton(
+    spec: Omit<Button, "el" | "icon" | "shown">,
+    container: HTMLElement = this.el,
+  ): HTMLButtonElement {
     const el = document.createElement("button");
     el.type = "button";
     el.className = "tool";
@@ -277,10 +447,24 @@ export class Toolbar {
     el.addEventListener("blur", () => this.hideTip());
 
     this.buttons.push(button);
-    this.el.append(el);
+    container.append(el);
+    return el;
   }
 
   private showTip(button: Button): void {
+    /*
+     * Nothing gets a tooltip while a tray is open, because the tray is in the
+     * tooltip's place: one sits over the other whichever button the pointer
+     * is on -- the tray's own buttons, and the button that opened it when the
+     * pointer comes back to it.
+     *
+     * It also keeps `offsetLeft` below honest. A tray is positioned, so it
+     * becomes the offsetParent of the buttons inside it, and an offset
+     * measured from the tray would place the tooltip as though the tray were
+     * the bar. The buttons are unreachable while the tray is shut, so this is
+     * the only state in which that could ever be read.
+     */
+    if (this.trayOpen) return;
     const { label, tip, key } = button.tooltip();
     const reason = button.disabled();
     this.tipLabel.textContent = label;
@@ -357,6 +541,8 @@ export class Toolbar {
   }
 
   dispose(): void {
+    this.observer.disconnect();
+    window.removeEventListener("resize", this.onResize);
     this.el.remove();
   }
 }

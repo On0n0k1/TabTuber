@@ -48,6 +48,8 @@ const HIDEABLE = [
   "toolbar",       // Toolbar.el
   "toolbar-tip",   // Toolbar.tip
   "toolbar-tip-key",
+  "toolbar-group", // Toolbar.group, hidden while its tray is shut
+  "tool",          // Toolbar.folded, hidden while the run is in the bar
   "latency",       // LatencyHud.el
   "latency-note",
 ];

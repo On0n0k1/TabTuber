@@ -1,7 +1,7 @@
 /*
  * Inline SVG icons for the toolbar (SPEC.md 9.1).
  *
- * Hand-drawn rather than pulled from an icon set: eighteen glyphs is not worth a
+ * Hand-drawn rather than pulled from an icon set: nineteen glyphs is not worth a
  * dependency, and a bundled font or sprite sheet would be a second asset to
  * fetch for a page whose whole point is being a single static file.
  *
@@ -222,6 +222,21 @@ export const ICONS = {
     <circle cx="9" cy="10.4" r="1.3" />
     <circle cx="15" cy="10.4" r="1.3" />
     <circle cx="12" cy="15.6" r="1.9" />`,
+
+  /*
+   * The face the group of expressions collapses into, and the one it wears
+   * when none of them is on.
+   *
+   * A flat mouth, which is the only reading of "no expression" that is not
+   * also one of the five. It is deliberately the same circle and the same two
+   * eyes as the rest of the set, so the collapsed button looks like a face
+   * that CHANGES rather than a different kind of control: it shows whichever
+   * expression is active, and this is simply the one for neutral.
+   */
+  expression: `
+    <circle cx="12" cy="12" r="9.2" />
+    <path d="M9 10.2v1M15 10.2v1" />
+    <path d="M8.4 15.1h7.2" />`,
 } as const;
 
 export type IconName = keyof typeof ICONS;

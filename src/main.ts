@@ -795,6 +795,19 @@ async function boot(): Promise<void> {
       // Neutral is a real answer, so clicking the lit expression returns to
       // it rather than needing a sixth button for it.
       allowNone: true,
+      /*
+       * Five buttons is the widest thing on the bar, and the bar does not get
+       * to choose the width of the screen it is on. Below the room it needs
+       * they fold into this one, which opens them above the bar -- and which
+       * wears whichever expression is active, so folding costs the readout
+       * nothing. Last on the bar, so it is the run nearest the edge that
+       * disappears first.
+       */
+      collapsed: {
+        label: "Expression",
+        tip: "Opens the five expressions. Shown as a single button because the bar is too narrow for all of them.",
+        icon: "expression",
+      },
       // Order and hotkeys come from EXPRESSIONS, which is what the keys are
       // bound to, so the bar cannot disagree with the keyboard about which
       // number is which expression.

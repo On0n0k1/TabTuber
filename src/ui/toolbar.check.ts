@@ -14,7 +14,7 @@
  * Never imported by the app.
  */
 
-import { needsRepaint, nextCycle, nextGroup, type ButtonPaint } from "./toolbar.ts";
+import { needsRepaint, nextCycle, nextGroup, shouldFold, type ButtonPaint } from "./toolbar.ts";
 
 let failures = 0;
 function check(name: string, ok: boolean, detail = ""): void {
@@ -91,6 +91,37 @@ const POSTURES = ["sitting", "standing"];
   check("becoming disabled repaints", needsRepaint(base, { ...base, disabled: true }));
   check("becoming enabled repaints",
     needsRepaint({ ...base, disabled: true }, base));
+}
+
+/*
+ * --- folding is decided from the UNFOLDED width ---------------------------
+ *
+ * Here for the same reason as `needsRepaint`: its failure mode is silence.
+ * The figures are the real ones -- the bar is 531px with the five expression
+ * buttons in it and 371px with them folded away -- and the room chosen is
+ * between the two, which is the only range where the bug shows.
+ */
+{
+  const UNFOLDED = 531;
+  const FOLDED = 371;
+  const ROOM = 420;
+
+  check("a bar wider than the room folds", shouldFold(UNFOLDED, ROOM));
+  check("asking again gives the same answer", shouldFold(UNFOLDED, ROOM));
+
+  // The decisive one. Folding makes room, so a decision taken from the folded
+  // width says there is now space to unfold -- which there is, until it
+  // unfolds and there is not. The remembered width is what stops that.
+  check("the folded width would say there is room, so it must not be re-read",
+    !shouldFold(FOLDED, ROOM),
+    "-- re-measuring after folding alternates forever at this window width");
+
+  check("a bar with room to spare stays in the bar", !shouldFold(UNFOLDED, 900));
+  // Nothing measured yet is not the same as fitting in nothing: folding on
+  // the strength of an unmeasured 0 would fold every bar on every screen.
+  check("an unmeasured bar does not fold", !shouldFold(0, 300));
+  check("a bar exactly as wide as the room does not fold",
+    !shouldFold(UNFOLDED, UNFOLDED));
 }
 
 if (failures > 0) throw new Error(`${failures} toolbar check failure(s)`);

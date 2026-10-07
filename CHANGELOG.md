@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/On0n0k1/TabTuber/compare/v1.2.1...v1.3.0) (2026-10-07)
+
+
+### Features
+
+* **tracker:** default to the pose backend, for everyone ([8a7a4b8](https://github.com/On0n0k1/TabTuber/commit/8a7a4b8b097403b7b792698576f08c1e561dbf38))
+
 ## [1.2.1](https://github.com/On0n0k1/TabTuber/compare/v1.2.0...v1.2.1) (2026-10-07)
 
 
